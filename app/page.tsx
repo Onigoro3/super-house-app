@@ -1,81 +1,72 @@
 // app/page.tsx
 'use client';
+import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import Sidebar from './components/Sidebar';
-import StockList from './components/StockList';
-import MoneyList from './components/MoneyList';
-import YouTubeAnalyze from './components/YouTubeAnalyze';
-import RecipeBook from './components/RecipeBook';
-import CookingGlossary from './components/CookingGlossary';
-import WeeklyCalendar from './components/WeeklyCalendar';
-import Auth from './components/Auth';
+import Auth from './components/Auth'; // Authはそのまま使える
 
-// ★ 型定義更新
-type ViewType = 'food' | 'seasoning' | 'other' | 'menu' | 'money' | 'youtube' | 'youtube_recipes' | 'ai_recipes' | 'glossary' | 'calendar';
-
-export default function Home() {
+export default function Launcher() {
   const [session, setSession] = useState<any>(null);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [currentView, setCurrentView] = useState<ViewType>('calendar');
   const [loading, setLoading] = useState(true);
 
+  // ログインチェック
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => { setSession(session); setLoading(false); });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => { setSession(session); setLoading(false); });
     return () => subscription.unsubscribe();
   }, []);
 
-  const handleLogout = async () => { await supabase.auth.signOut(); setSession(null); };
-
-  if (loading) return <div className="min-h-screen flex items-center justify-center bg-gray-100 text-gray-500">読み込み中...</div>;
+  if (loading) return <div className="min-h-screen flex items-center justify-center bg-gray-900 text-white">Loading...</div>;
   if (!session) return <Auth onLogin={() => {}} />;
 
-  const getTitle = () => {
-    switch (currentView) {
-      case 'food': return '🍎 食材の在庫';
-      case 'seasoning': return '🧂 調味料の在庫';
-      case 'other': return '🧻 日用品の在庫';
-      case 'menu': return '👨‍🍳 献立・レシピ';
-      case 'money': return '💰 資産管理';
-      case 'youtube': return '📺 動画レシピ分析';
-      case 'youtube_recipes': return '📺 YouTubeレシピ帳';
-      case 'ai_recipes': return '🤖 AI献立レシピ帳';
-      case 'glossary': return '📚 料理用語じてん';
-      case 'calendar': return '📅 献立カレンダー';
-      default: return 'Super House App';
-    }
-  };
+  // ★アプリのリスト（今後ここを増やしていく）
+  const apps = [
+    { name: 'Super House', icon: '🏠', color: 'bg-indigo-500', link: '/house', desc: '在庫・献立・レシピ' },
+    { name: '計算機', icon: '🧮', color: 'bg-orange-400', link: '#', desc: '準備中' },
+    { name: 'ToDo', icon: '✅', color: 'bg-green-500', link: '#', desc: '準備中' },
+    { name: 'カレンダー', icon: '📅', color: 'bg-blue-500', link: '#', desc: '準備中' },
+    { name: 'メモ帳', icon: '📝', color: 'bg-yellow-400', link: '#', desc: '準備中' },
+    { name: 'チャットAI', icon: '🤖', color: 'bg-purple-500', link: '#', desc: '準備中' },
+    { name: '天気', icon: '☀', color: 'bg-sky-400', link: '#', desc: '準備中' },
+    { name: '設定', icon: '⚙', color: 'bg-gray-500', link: '#', desc: 'アカウント設定' },
+  ];
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col md:flex-row text-gray-800">
-      <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} currentView={currentView} onChangeView={setCurrentView} />
-      <main className="flex-1 flex flex-col h-screen overflow-hidden">
-        <header className="bg-white p-4 shadow-sm flex items-center justify-between z-20 md:hidden">
-          <div className="flex items-center gap-4">
-            <button onClick={() => setIsSidebarOpen(true)} className="p-2 rounded hover:bg-gray-100">
-              <div className="w-6 h-0.5 bg-gray-600 mb-1.5"></div><div className="w-6 h-0.5 bg-gray-600 mb-1.5"></div><div className="w-6 h-0.5 bg-gray-600"></div>
-            </button>
-            <h1 className="text-lg font-bold text-gray-800">{getTitle()}</h1>
-          </div>
-          <button onClick={handleLogout} className="text-xs text-gray-500 border border-gray-300 px-2 py-1 rounded hover:bg-gray-100">ログアウト</button>
-        </header>
-        <header className="hidden md:flex bg-white p-4 shadow-sm items-center justify-between z-20">
-           <h1 className="text-xl font-bold text-gray-800 px-4">{getTitle()}</h1>
-           <button onClick={handleLogout} className="text-sm text-gray-500 border border-gray-300 px-3 py-1 rounded hover:bg-gray-100 mr-4">ログアウト</button>
-        </header>
-        <div className="flex-1 overflow-y-auto p-4 md:p-8">
-          <div className="max-w-7xl mx-auto">
-            {currentView === 'money' ? <MoneyList /> : 
-             currentView === 'youtube' ? <YouTubeAnalyze /> : 
-             currentView === 'youtube_recipes' ? <RecipeBook mode="youtube" /> : // ★モード指定
-             currentView === 'ai_recipes' ? <RecipeBook mode="ai" /> :           // ★モード指定
-             currentView === 'glossary' ? <CookingGlossary /> : 
-             currentView === 'calendar' ? <WeeklyCalendar /> : 
-             <StockList view={currentView as any} />}
-          </div>
+    <div className="min-h-screen bg-gray-900 text-white p-6 flex flex-col items-center">
+      
+      {/* 時計とかステータスバーっぽい装飾 */}
+      <div className="w-full max-w-lg mb-10 mt-4 flex justify-between items-end">
+        <div>
+          <h1 className="text-3xl font-bold">Good Morning</h1>
+          <p className="text-gray-400 text-sm">今日は何をしますか？</p>
         </div>
-      </main>
+        <div className="text-right">
+          <p className="text-2xl font-mono">{new Date().getHours()}:{String(new Date().getMinutes()).padStart(2, '0')}</p>
+        </div>
+      </div>
+
+      {/* アイコンのグリッド表示 */}
+      <div className="grid grid-cols-3 gap-6 max-w-lg w-full">
+        {apps.map((app, index) => (
+          <Link key={index} href={app.link} className="flex flex-col items-center group">
+            <div className={`w-20 h-20 ${app.color} rounded-2xl shadow-lg flex items-center justify-center text-4xl mb-2 transition-transform transform group-hover:scale-105 group-active:scale-95 relative overflow-hidden`}>
+              {/* 光沢のエフェクト */}
+              <div className="absolute top-0 left-0 w-full h-1/2 bg-white opacity-10 rounded-t-2xl pointer-events-none"></div>
+              {app.icon}
+            </div>
+            <span className="text-xs font-medium tracking-wide text-gray-300 group-hover:text-white transition-colors">{app.name}</span>
+          </Link>
+        ))}
+      </div>
+
+      {/* ドック（下の固定メニューっぽいもの） */}
+      <div className="fixed bottom-6 bg-white/10 backdrop-blur-md p-4 rounded-3xl flex gap-6 border border-white/10 shadow-2xl">
+        <div className="w-12 h-12 bg-green-500 rounded-xl flex items-center justify-center text-2xl shadow">📞</div>
+        <div className="w-12 h-12 bg-blue-500 rounded-xl flex items-center justify-center text-2xl shadow">🌐</div>
+        <div className="w-12 h-12 bg-yellow-500 rounded-xl flex items-center justify-center text-2xl shadow">💬</div>
+        <div className="w-12 h-12 bg-pink-500 rounded-xl flex items-center justify-center text-2xl shadow">🎵</div>
+      </div>
+
     </div>
   );
 }
