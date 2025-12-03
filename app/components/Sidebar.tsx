@@ -1,7 +1,7 @@
 // app/components/Sidebar.tsx
 'use client';
-// ★ calendar を追加
-type ViewType = 'food' | 'seasoning' | 'other' | 'menu' | 'money' | 'youtube' | 'recipebook' | 'glossary' | 'calendar';
+// ★ ai_recipes, youtube_recipes に変更
+type ViewType = 'food' | 'seasoning' | 'other' | 'menu' | 'money' | 'youtube' | 'youtube_recipes' | 'ai_recipes' | 'glossary' | 'calendar';
 
 type Props = {
   isOpen: boolean;
@@ -12,14 +12,15 @@ type Props = {
 
 export default function Sidebar({ isOpen, onClose, currentView, onChangeView }: Props) {
   const menuItems: { id: ViewType; label: string; icon: string }[] = [
-    { id: 'calendar', label: '献立カレンダー', icon: '📅' }, // ★ここに追加
+    { id: 'calendar', label: '献立カレンダー', icon: '📅' },
     { id: 'food', label: '食材の在庫', icon: '🍎' },
     { id: 'seasoning', label: '調味料の在庫', icon: '🧂' },
     { id: 'other', label: '日用品の在庫', icon: '🧻' },
     { id: 'menu', label: '献立・レシピ', icon: '👨‍🍳' },
-    { id: 'recipebook', label: '保存レシピ帳', icon: '📖' },
+    { id: 'youtube_recipes', label: 'YouTubeレシピ帳', icon: '📺' }, // ★変更
+    { id: 'ai_recipes', label: 'AI献立レシピ帳', icon: '🤖' },     // ★追加
+    { id: 'youtube', label: '動画分析', icon: '📹' },
     { id: 'glossary', label: '料理用語じてん', icon: '📚' },
-    { id: 'youtube', label: '動画分析', icon: '📺' },
     { id: 'money', label: '資産管理', icon: '💰' },
   ];
 
@@ -40,7 +41,7 @@ export default function Sidebar({ isOpen, onClose, currentView, onChangeView }: 
           </button>
         ))}
       </nav>
-      <div className="p-4 text-xs text-center text-gray-400 border-t">v4.0 Calendar</div>
+      <div className="p-4 text-xs text-center text-gray-400 border-t">v5.0 Dual Recipe Book</div>
     </div>
   );
 
