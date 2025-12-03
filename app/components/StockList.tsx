@@ -43,7 +43,10 @@ export default function StockList({ view }: { view: ViewType }) {
   const [useQuantities, setUseQuantities] = useState<Record<number, string>>({});
   const [includeRice, setIncludeRice] = useState(true);
   const [dishCount, setDishCount] = useState(1);
-  const [servings, setServings] = useState(2);
+  
+  // ★変更：大人と子供の人数を分ける
+  const [adultCount, setAdultCount] = useState(2);
+  const [childCount, setChildCount] = useState(0);
   
   const [menuSets, setMenuSets] = useState<MenuSet[]>([]);
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
@@ -123,7 +126,14 @@ export default function StockList({ view }: { view: ViewType }) {
       const res = await fetch('/api/menu', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ingredients: ingredientsToSend, seasoning: availableSeasonings || 'なし', includeRice, dishCount, servings }),
+        body: JSON.stringify({ 
+          ingredients: ingredientsToSend, 
+          seasoning: availableSeasonings || 'なし', 
+          includeRice, 
+          dishCount, 
+          adultCount, // ★大人
+          childCount  // ★子供
+        }),
       });
       if (!res.ok) throw new Error('Error');
       const data = await res.json();
@@ -131,53 +141,32 @@ export default function StockList({ view }: { view: ViewType }) {
     } catch (e) { alert('生成エラー'); } finally { setLoading(false); }
   };
 
-  // ★調理完了＆在庫減算ロジック
+  // 在庫引き算
   const handleCooked = async (dish: Dish) => {
     if (!confirm(`「${dish.title}」を作りましたか？\n在庫から材料を減らします。`)) return;
-
     let updatedCount = 0;
-
     for (const ingredientStr of dish.ingredients) {
-      // レシピの材料名と数値を抽出 (例: "豚肉 200g")
       const matchRecipe = ingredientStr.match(/^(.+?)\s*([0-9０-９\.]+)(.*)$/);
       if (!matchRecipe) continue;
-
-      const recipeName = matchRecipe[1].trim(); // "豚肉"
-      const recipeNum = parseFloat(matchRecipe[2]); // 200
-      const unit = matchRecipe[3].trim(); // "g"
-
-      // 在庫から一致するアイテムを探す（簡易マッチ）
+      const recipeName = matchRecipe[1].trim(); 
+      const recipeNum = parseFloat(matchRecipe[2]); 
+      const unit = matchRecipe[3].trim(); 
       const stockItem = items.find(i => i.status === 'ok' && (i.name.includes(recipeName) || recipeName.includes(i.name)));
-      
       if (stockItem && stockItem.quantity) {
-        // 在庫の数値を抽出
         const matchStock = stockItem.quantity.match(/^([0-9０-９\.]+)(.*)$/);
         if (matchStock) {
-          const stockNum = parseFloat(matchStock[1]); // 在庫数
-          // 引き算
+          const stockNum = parseFloat(matchStock[1]); 
           let newNum = stockNum - recipeNum;
-          
           let newStatus: Status = 'ok';
           let newQuantityStr = stockItem.quantity;
-
-          if (newNum <= 0) {
-            newNum = 0;
-            newStatus = 'buy'; // なくなったら買い物リストへ
-            newQuantityStr = '0' + unit;
-          } else {
-            // 小数点第1位まで丸めて単位をつける
-            newQuantityStr = Math.round(newNum * 10) / 10 + unit;
-          }
-
-          // DB更新
+          if (newNum <= 0) { newNum = 0; newStatus = 'buy'; newQuantityStr = '0' + unit; } 
+          else { newQuantityStr = Math.round(newNum * 10) / 10 + unit; }
           await supabase.from('items').update({ quantity: newQuantityStr, status: newStatus }).eq('id', stockItem.id);
           updatedCount++;
         }
       }
     }
-
-    alert(`${updatedCount}個の食材の在庫を更新しました！\n美味しく召し上がれ😋`);
-    fetchItems(); // リストを最新にする
+    alert(`${updatedCount}個の食材の在庫を更新しました！`); fetchItems();
   };
 
   if (view === 'menu') {
@@ -213,19 +202,35 @@ export default function StockList({ view }: { view: ViewType }) {
               <input type="checkbox" checked={includeRice} onChange={() => setIncludeRice(!includeRice)} className="w-5 h-5 accent-orange-500" />
               <span className="text-gray-800 font-bold">🍚 白ご飯も使いますか？</span>
             </label>
+            
+            {/* 品数選択 */}
+            <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
+              <p className="text-xs font-bold text-blue-800 mb-1">🍽️ 品数</p>
+              <div className="flex items-center justify-between bg-white rounded px-2 border"><button onClick={() => setDishCount(Math.max(1, dishCount - 1))} className="text-blue-600 font-bold px-2 py-1">-</button><span className="font-bold text-gray-800">{dishCount}品</span><button onClick={() => setDishCount(Math.min(5, dishCount + 1))} className="text-blue-600 font-bold px-2 py-1">+</button></div>
+            </div>
+
+            {/* ★人数選択（大人・子供） */}
             <div className="grid grid-cols-2 gap-4">
-              <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
-                <p className="text-xs font-bold text-blue-800 mb-1">🍽️ 品数</p>
-                <div className="flex items-center justify-between bg-white rounded px-2 border"><button onClick={() => setDishCount(Math.max(1, dishCount - 1))} className="text-blue-600 font-bold px-2 py-1">-</button><span className="font-bold text-gray-800">{dishCount}品</span><button onClick={() => setDishCount(Math.min(5, dishCount + 1))} className="text-blue-600 font-bold px-2 py-1">+</button></div>
-              </div>
               <div className="bg-green-50 p-3 rounded-lg border border-green-100">
-                <p className="text-xs font-bold text-green-800 mb-1">👨‍👩‍👧‍👦 人数</p>
-                <div className="flex items-center justify-between bg-white rounded px-2 border"><button onClick={() => setServings(Math.max(1, servings - 1))} className="text-green-600 font-bold px-2 py-1">-</button><span className="font-bold text-gray-800">{servings}人分</span><button onClick={() => setServings(Math.min(10, servings + 1))} className="text-green-600 font-bold px-2 py-1">+</button></div>
+                <p className="text-xs font-bold text-green-800 mb-1">👨 大人</p>
+                <div className="flex items-center justify-between bg-white rounded px-2 border">
+                  <button onClick={() => setAdultCount(Math.max(1, adultCount - 1))} className="text-green-600 font-bold px-2 py-1">-</button>
+                  <span className="font-bold text-gray-800">{adultCount}人</span>
+                  <button onClick={() => setAdultCount(Math.min(10, adultCount + 1))} className="text-green-600 font-bold px-2 py-1">+</button>
+                </div>
+              </div>
+              <div className="bg-yellow-50 p-3 rounded-lg border border-yellow-100">
+                <p className="text-xs font-bold text-yellow-800 mb-1">🧒 子供</p>
+                <div className="flex items-center justify-between bg-white rounded px-2 border">
+                  <button onClick={() => setChildCount(Math.max(0, childCount - 1))} className="text-yellow-600 font-bold px-2 py-1">-</button>
+                  <span className="font-bold text-gray-800">{childCount}人</span>
+                  <button onClick={() => setChildCount(Math.min(10, childCount + 1))} className="text-yellow-600 font-bold px-2 py-1">+</button>
+                </div>
               </div>
             </div>
           </div>
           <button onClick={generateMenu} disabled={selectedIds.length === 0 || loading} className={`w-full py-3 rounded-lg font-bold text-white shadow ${loading ? 'bg-indigo-400' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
-            {loading ? 'AIシェフが考案中...' : `✨ ${servings}人分の献立を5案考える！`}
+            {loading ? 'AIシェフが考案中...' : `✨ 献立を5案考える！`}
           </button>
         </div>
 
@@ -238,7 +243,7 @@ export default function StockList({ view }: { view: ViewType }) {
                 <div key={index} className="bg-white border-2 border-indigo-50 rounded-xl shadow-sm overflow-hidden">
                   <button onClick={() => setExpandedIndex(isOpen ? null : index)} className="w-full text-left p-4 hover:bg-indigo-50 transition">
                     <div className="flex justify-between items-start">
-                      <div><h4 className="font-bold text-xl text-indigo-900 mb-1">{menu.menu_title}</h4><div className="flex items-center gap-2"><span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded-full font-bold">計 {menu.total_calories}kcal</span><span className="text-xs text-gray-500">{menu.dishes.length}品構成</span></div></div>
+                      <div><h4 className="font-bold text-xl text-indigo-900 mb-1">{menu.menu_title}</h4><div className="flex items-center gap-2"><span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded-full font-bold">計 {menu.total_calories}kcal</span><span className="text-xs text-gray-500">{menu.dishes.length}品</span></div></div>
                       <span className={`text-2xl text-indigo-300 transition ${isOpen ? 'rotate-180' : ''}`}>▼</span>
                     </div>
                     <p className="text-sm text-gray-600 mt-3 bg-gray-50 p-2 rounded border border-gray-100">💡 {menu.nutrition_point}</p>
@@ -252,16 +257,10 @@ export default function StockList({ view }: { view: ViewType }) {
                             <span className="text-xs font-bold text-orange-500">{dish.difficulty}</span>
                           </div>
                           <div className="grid md:grid-cols-2 gap-4">
-                            <div><p className="text-xs font-bold text-gray-500 mb-1">🥬 材料 ({servings}人分)</p><ul className="list-disc pl-4 text-sm text-gray-700">{dish.ingredients.map((ing, k) => <li key={k}>{ing}</li>)}</ul></div>
+                            <div><p className="text-xs font-bold text-gray-500 mb-1">🥬 材料 (大人{adultCount}人・子供{childCount}人)</p><ul className="list-disc pl-4 text-sm text-gray-700">{dish.ingredients.map((ing, k) => <li key={k}>{ing}</li>)}</ul></div>
                             <div><p className="text-xs font-bold text-gray-500 mb-1">🔥 作り方</p><ol className="list-decimal pl-4 text-sm text-gray-700 space-y-2">{dish.steps.map((step, k) => <li key={k}>{step}</li>)}</ol></div>
                           </div>
-                          {/* ★作ったボタン */}
-                          <button 
-                            onClick={() => handleCooked(dish)}
-                            className="w-full mt-4 bg-green-500 text-white py-2 rounded-lg font-bold shadow hover:bg-green-600 transition flex items-center justify-center gap-2"
-                          >
-                            😋 美味しくできた！ <span className="text-xs font-normal">(在庫から減らす)</span>
-                          </button>
+                          <button onClick={() => handleCooked(dish)} className="w-full mt-4 bg-green-500 text-white py-2 rounded-lg font-bold shadow hover:bg-green-600 transition flex items-center justify-center gap-2">😋 美味しくできた！ <span className="text-xs font-normal">(在庫から減らす)</span></button>
                         </div>
                       ))}
                     </div>
