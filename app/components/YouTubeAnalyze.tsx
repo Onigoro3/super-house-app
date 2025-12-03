@@ -1,6 +1,7 @@
 // app/components/YouTubeAnalyze.tsx
 'use client';
 import { useState } from 'react';
+import { supabase } from '@/lib/supabase';
 
 type AnalyzedRecipe = {
   title: string;
@@ -13,12 +14,15 @@ export default function YouTubeAnalyze() {
   const [loading, setLoading] = useState(false);
   const [recipe, setRecipe] = useState<AnalyzedRecipe | null>(null);
   const [error, setError] = useState('');
+  const [isSaved, setIsSaved] = useState(false);
 
+  // 分析実行
   const analyzeVideo = async () => {
     if (!url) return;
     setLoading(true);
     setError('');
     setRecipe(null);
+    setIsSaved(false);
 
     try {
       const res = await fetch('/api/youtube', {
@@ -33,6 +37,28 @@ export default function YouTubeAnalyze() {
       setError('エラー：字幕があるYouTube動画か確認してください。');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // ★追加：Supabaseに保存する機能
+  const saveRecipe = async () => {
+    if (!recipe) return;
+    
+    const { error } = await supabase.from('recipes').insert([
+      {
+        title: recipe.title,
+        url: url,
+        ingredients: recipe.ingredients,
+        steps: recipe.steps
+      }
+    ]);
+
+    if (error) {
+      alert('保存に失敗しました');
+      console.error(error);
+    } else {
+      setIsSaved(true);
+      alert('レシピ帳に保存しました！');
     }
   };
 
@@ -67,6 +93,21 @@ export default function YouTubeAnalyze() {
             {recipe.title}
           </div>
           <div className="p-5 space-y-6">
+            
+            {/* 保存ボタンエリア */}
+            {!isSaved ? (
+              <button 
+                onClick={saveRecipe}
+                className="w-full bg-blue-600 text-white py-2 rounded-lg font-bold shadow hover:bg-blue-700 mb-4"
+              >
+                💾 このレシピを保存する
+              </button>
+            ) : (
+              <div className="w-full bg-green-100 text-green-700 py-2 rounded-lg font-bold text-center mb-4 border border-green-300">
+                ✅ 保存済み
+              </div>
+            )}
+
             <div>
               <h3 className="font-bold text-gray-700 border-l-4 border-green-500 pl-3 mb-3">🥬 材料</h3>
               <ul className="list-disc pl-5 space-y-1 text-gray-700">

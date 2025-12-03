@@ -5,9 +5,10 @@ import Sidebar from './components/Sidebar';
 import StockList from './components/StockList';
 import MoneyList from './components/MoneyList';
 import YouTubeAnalyze from './components/YouTubeAnalyze';
+import RecipeBook from './components/RecipeBook'; // ★追加
 
-// ★ youtube を追加
-type ViewType = 'food' | 'seasoning' | 'other' | 'menu' | 'money' | 'youtube';
+// ★ recipebook を追加
+type ViewType = 'food' | 'seasoning' | 'other' | 'menu' | 'money' | 'youtube' | 'recipebook';
 
 export default function Home() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -21,6 +22,7 @@ export default function Home() {
       case 'menu': return '👨‍🍳 献立・レシピ';
       case 'money': return '💰 資産管理';
       case 'youtube': return '📺 動画レシピ分析';
+      case 'recipebook': return '📖 保存レシピ帳'; // ★追加
       default: return 'Super House App';
     }
   };
@@ -43,7 +45,8 @@ export default function Home() {
 
       <div className="min-h-[85vh]">
         {currentView === 'money' ? <MoneyList /> : 
-         currentView === 'youtube' ? <YouTubeAnalyze /> : // ★ここを追加
+         currentView === 'youtube' ? <YouTubeAnalyze /> : 
+         currentView === 'recipebook' ? <RecipeBook /> : // ★追加
          <StockList view={currentView as any} />}
       </div>
     </main>

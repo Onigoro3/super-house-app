@@ -1,8 +1,7 @@
 // app/components/Sidebar.tsx
 'use client';
-
-// ★ youtube を追加
-type ViewType = 'food' | 'seasoning' | 'other' | 'menu' | 'money' | 'youtube';
+// ★ recipebook を追加
+type ViewType = 'food' | 'seasoning' | 'other' | 'menu' | 'money' | 'youtube' | 'recipebook';
 
 type Props = {
   isOpen: boolean;
@@ -17,8 +16,9 @@ export default function Sidebar({ isOpen, onClose, currentView, onChangeView }: 
     { id: 'seasoning', label: '調味料の在庫', icon: '🧂' },
     { id: 'other', label: '日用品の在庫', icon: '🧻' },
     { id: 'menu', label: '献立・レシピ', icon: '👨‍🍳' },
+    { id: 'recipebook', label: '保存レシピ帳', icon: '📖' }, // ★ここを追加
+    { id: 'youtube', label: '動画分析', icon: '📺' },
     { id: 'money', label: '資産管理', icon: '💰' },
-    { id: 'youtube', label: '動画分析', icon: '📺' }, // ★ここを追加
   ];
 
   return (
