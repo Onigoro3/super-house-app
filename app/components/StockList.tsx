@@ -1,6 +1,7 @@
 // app/components/StockList.tsx
 'use client';
 import { useState, useEffect } from 'react';
+import { supabase } from '@/lib/supabase';
 
 type Category = 'food' | 'other';
 type Status = 'ok' | 'buy';
@@ -18,35 +19,48 @@ export default function StockList() {
   const [newCategory, setNewCategory] = useState<Category>('food');
   const [menuIdea, setMenuIdea] = useState('');
 
+  // データの読み込み
+  const fetchItems = async () => {
+    const { data, error } = await supabase
+      .from('items')
+      .select('*')
+      .order('created_at', { ascending: true });
+    
+    if (error) console.error('Error:', error);
+    else setItems(data || []);
+  };
+
   useEffect(() => {
-    const saved = localStorage.getItem('super_house_stock');
-    if (saved) setItems(JSON.parse(saved));
+    fetchItems();
   }, []);
 
-  useEffect(() => {
-    localStorage.setItem('super_house_stock', JSON.stringify(items));
-  }, [items]);
-
-  const addItem = () => {
+  // アイテム追加
+  const addItem = async () => {
     if (!newItemName) return;
-    const newItem: Item = {
-      id: Date.now(),
-      name: newItemName,
-      category: newCategory,
-      status: 'ok',
-    };
-    setItems([...items, newItem]);
-    setNewItemName('');
+    const { error } = await supabase.from('items').insert([
+      { name: newItemName, category: newCategory, status: 'ok' }
+    ]);
+
+    if (!error) {
+      setNewItemName('');
+      fetchItems();
+    }
   };
 
-  const toggleStatus = (id: number) => {
-    setItems(items.map(i => i.id === id ? { ...i, status: i.status === 'ok' ? 'buy' : 'ok' } : i));
+  // ステータス変更
+  const toggleStatus = async (id: number, currentStatus: Status) => {
+    const newStatus = currentStatus === 'ok' ? 'buy' : 'ok';
+    setItems(items.map(i => i.id === id ? { ...i, status: newStatus } : i));
+    await supabase.from('items').update({ status: newStatus }).eq('id', id);
   };
 
-  const deleteItem = (id: number) => {
+  // 削除
+  const deleteItem = async (id: number) => {
     setItems(items.filter(i => i.id !== id));
+    await supabase.from('items').delete().eq('id', id);
   };
 
+  // 献立提案（修正箇所）
   const generateMenu = () => {
     const availableFoods = items.filter(i => i.category === 'food' && i.status === 'ok').map(i => i.name);
     
@@ -56,9 +70,9 @@ export default function StockList() {
     }
 
     const shuffled = availableFoods.sort(() => 0.5 - Math.random());
-    const selected = shuffled.slice(0, 2);
-    const main = selected[0];
-    const sub = selected[1] || '卵';
+    // ↓↓ ここを修正しました ↓↓
+    const main = shuffled[0];
+    const sub = shuffled[1] || '卵';
 
     const ideas = [
       `👨‍🍳 「${main}」と「${sub}」のピリ辛炒め`,
@@ -66,7 +80,6 @@ export default function StockList() {
       `🍝 「${main}」を使った和風パスタ（隠し味に${sub}）`,
       `🍛 具だくさん！「${main}」カレー（${sub}添え）`,
     ];
-    
     setMenuIdea(ideas[Math.floor(Math.random() * ideas.length)]);
   };
 
@@ -121,10 +134,7 @@ export default function StockList() {
       <div className="bg-orange-50 p-4 rounded-xl border border-orange-200">
         <div className="flex justify-between items-center mb-3">
           <h3 className="font-bold text-orange-800">🍳 今日のご飯どうする？</h3>
-          <button 
-            onClick={generateMenu}
-            className="bg-orange-500 text-white text-sm px-3 py-2 rounded-lg font-bold hover:bg-orange-600 shadow"
-          >
+          <button onClick={generateMenu} className="bg-orange-500 text-white text-sm px-3 py-2 rounded-lg font-bold hover:bg-orange-600 shadow">
             提案して！
           </button>
         </div>
@@ -157,7 +167,7 @@ export default function StockList() {
   );
 }
 
-function StockItem({ item, onToggle, onDelete }: { item: Item, onToggle: (id: number) => void, onDelete: (id: number) => void }) {
+function StockItem({ item, onToggle, onDelete }: { item: Item, onToggle: (id: number, status: Status) => void, onDelete: (id: number) => void }) {
   return (
     <div className={`flex justify-between items-center p-3 rounded border shadow-sm ${item.status === 'buy' ? 'bg-red-50 border-red-200' : 'bg-white'}`}>
       <span className={`font-medium ${item.status === 'buy' ? 'text-red-500' : 'text-gray-800'}`}>
@@ -165,18 +175,14 @@ function StockItem({ item, onToggle, onDelete }: { item: Item, onToggle: (id: nu
       </span>
       <div className="flex gap-2">
         <button
-          onClick={() => onToggle(item.id)}
+          onClick={() => onToggle(item.id, item.status)}
           className={`text-xs px-3 py-2 rounded-full font-bold transition ${
-            item.status === 'ok' 
-              ? 'bg-green-100 text-green-700 hover:bg-green-200' 
-              : 'bg-red-100 text-red-700 hover:bg-red-200'
+            item.status === 'ok' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
           }`}
         >
           {item.status === 'ok' ? 'ある' : 'ない'}
         </button>
-        <button onClick={() => onDelete(item.id)} className="text-gray-300 hover:text-red-500 px-2">
-          ✕
-        </button>
+        <button onClick={() => onDelete(item.id)} className="text-gray-300 hover:text-red-500 px-2">✕</button>
       </div>
     </div>
   );

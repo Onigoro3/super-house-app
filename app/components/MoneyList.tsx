@@ -1,6 +1,7 @@
 // app/components/MoneyList.tsx
 'use client';
 import { useState, useEffect } from 'react';
+import { supabase } from '@/lib/supabase';
 
 type Sub = {
   id: number;
@@ -15,26 +16,31 @@ export default function MoneyList() {
   const [price, setPrice] = useState('');
   const [date, setDate] = useState('');
 
-  useEffect(() => {
-    const saved = localStorage.getItem('super_house_money');
-    if (saved) setSubs(JSON.parse(saved));
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem('super_house_money', JSON.stringify(subs));
-  }, [subs]);
-
-  const addSub = () => {
-    if (!name || !price) return;
-    const newSub: Sub = { id: Date.now(), name, price: parseInt(price), date: date || '-' };
-    setSubs([...subs, newSub]);
-    setName('');
-    setPrice('');
-    setDate('');
+  const fetchSubs = async () => {
+    const { data, error } = await supabase.from('expenses').select('*').order('created_at', { ascending: true });
+    if (!error) setSubs(data || []);
   };
 
-  const deleteSub = (id: number) => {
+  useEffect(() => {
+    fetchSubs();
+  }, []);
+
+  const addSub = async () => {
+    if (!name || !price) return;
+    const { error } = await supabase.from('expenses').insert([
+      { name, price: parseInt(price), date: date || '-' }
+    ]);
+    if (!error) {
+      setName('');
+      setPrice('');
+      setDate('');
+      fetchSubs();
+    }
+  };
+
+  const deleteSub = async (id: number) => {
     setSubs(subs.filter(s => s.id !== id));
+    await supabase.from('expenses').delete().eq('id', id);
   };
 
   const total = subs.reduce((sum, item) => sum + item.price, 0);
