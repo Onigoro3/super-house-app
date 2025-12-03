@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
-import { PDFDocument, rgb } from 'pdf-lib';
+import { PDFDocument, rgb, degrees } from 'pdf-lib'; // ★ degreesを追加
 import fontkit from '@pdf-lib/fontkit';
 
 // 型定義
@@ -30,9 +30,9 @@ export default function PDFEditor() {
   
   // ツール状態
   const [selectedTool, setSelectedTool] = useState<string | null>(null);
-  const [currentColor, setCurrentColor] = useState(COLORS[1]); // デフォルト赤
-  const [currentSize, setCurrentSize] = useState(16); // デフォルトサイズ
-  const [useJitter, setUseJitter] = useState(false); // ★ジッター機能
+  const [currentColor, setCurrentColor] = useState(COLORS[1]); 
+  const [currentSize, setCurrentSize] = useState(16); 
+  const [useJitter, setUseJitter] = useState(false); 
 
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [isSaving, setIsSaving] = useState(false);
@@ -46,7 +46,7 @@ export default function PDFEditor() {
     }
   };
 
-  // ★ PDF保存処理 (ジッター実装)
+  // PDF保存処理
   const savePDF = async () => {
     if (!file) return;
     setIsSaving(true);
@@ -67,16 +67,14 @@ export default function PDFEditor() {
           const page = pages[pageIndex];
           const { height } = page.getSize();
           
-          // ★ジッター計算 (ONの場合、-2px〜+2px の乱数を加える)
+          // ジッター計算
           const jitterX = useJitter ? (Math.random() - 0.5) * 4 : 0;
           const jitterY = useJitter ? (Math.random() - 0.5) * 4 : 0;
-          // 角度ジッター (文字の場合のみ少し傾ける)
           const jitterRot = (useJitter && annot.type === 'text') ? (Math.random() - 0.5) * 5 : 0;
 
           const pdfX = annot.x + jitterX;
-          const pdfY = height - annot.y + jitterY; // Y座標反転 + ジッター
+          const pdfY = height - annot.y + jitterY;
 
-          // 色の検索 (保存用にRGB値を取得)
           const colorObj = COLORS.find(c => c.value === annot.color) || COLORS[0];
           const drawColor = rgb(colorObj.r, colorObj.g, colorObj.b);
 
@@ -84,11 +82,11 @@ export default function PDFEditor() {
           if (annot.type === 'text' && annot.content) {
             page.drawText(annot.content, {
               x: pdfX,
-              y: pdfY - annot.size + 5, // ベースライン調整
+              y: pdfY - annot.size + 5,
               size: annot.size,
               font: customFont,
               color: drawColor,
-              rotate: { type: 'degrees', angle: jitterRot } // 手書き風の傾き
+              rotate: degrees(jitterRot) // ★ここを修正しました！
             });
           } else if (annot.type === 'check') {
             page.drawText('✔', {
@@ -100,12 +98,12 @@ export default function PDFEditor() {
             });
           } else if (annot.type === 'rect') {
             page.drawRectangle({
-              x: pdfX - (annot.width || 60)/2, // 中心基準
+              x: pdfX - (annot.width || 60)/2,
               y: pdfY - (annot.height || 40)/2,
               width: annot.width || 60,
               height: annot.height || 40,
               borderColor: drawColor,
-              borderWidth: annot.size / 5, // サイズを太さに変換
+              borderWidth: annot.size / 5,
             });
           } else if (annot.type === 'circle') {
             page.drawEllipse({
@@ -117,10 +115,9 @@ export default function PDFEditor() {
               borderWidth: annot.size / 5,
             });
           } else if (annot.type === 'line') {
-            // 直線 (始点から終点へ)
             page.drawLine({
               start: { x: pdfX, y: pdfY },
-              end: { x: pdfX + (annot.width || 100), y: pdfY - (annot.height || 0) }, // PDF座標系ではYが逆
+              end: { x: pdfX + (annot.width || 100), y: pdfY - (annot.height || 0) },
               color: drawColor,
               thickness: annot.size / 5,
             });
@@ -162,10 +159,9 @@ export default function PDFEditor() {
         <div className="text-sm truncate max-w-[200px]">{file ? file.name : ''}</div>
       </header>
 
-      {/* 高機能ツールバー */}
+      {/* ツールバー */}
       <div className="bg-white border-b p-2 flex gap-2 items-center shadow-sm overflow-x-auto whitespace-nowrap">
         
-        {/* ファイル操作 */}
         <div className="flex gap-1 border-r pr-2">
           <label className="cursor-pointer bg-blue-50 text-blue-600 hover:bg-blue-100 px-3 py-1 rounded font-bold text-xs flex items-center gap-1">
             📂 開く
@@ -176,7 +172,6 @@ export default function PDFEditor() {
           </button>
         </div>
 
-        {/* ツール選択 */}
         <div className="flex gap-1 border-r pr-2">
           <button onClick={() => setSelectedTool(selectedTool === 'text' ? null : 'text')} className={`p-2 rounded font-bold text-xs ${selectedTool === 'text' ? 'bg-gray-800 text-white' : 'bg-gray-100'}`}>T 文字</button>
           <button onClick={() => setSelectedTool(selectedTool === 'check' ? null : 'check')} className={`p-2 rounded font-bold text-xs ${selectedTool === 'check' ? 'bg-gray-800 text-white' : 'bg-gray-100'}`}>✔</button>
@@ -193,9 +188,7 @@ export default function PDFEditor() {
           <button onClick={() => setSelectedTool(selectedTool === 'white' ? null : 'white')} className={`p-2 rounded font-bold text-xs ${selectedTool === 'white' ? 'bg-gray-800 text-white' : 'bg-gray-100'}`}>⬜</button>
         </div>
 
-        {/* スタイル設定 */}
         <div className="flex gap-2 items-center border-r pr-2">
-          {/* 色選択 */}
           <div className="flex gap-1">
             {COLORS.map(c => (
               <button 
@@ -206,7 +199,6 @@ export default function PDFEditor() {
               />
             ))}
           </div>
-          {/* サイズ選択 */}
           <input 
             type="number" 
             value={currentSize} 
@@ -216,11 +208,10 @@ export default function PDFEditor() {
           />
         </div>
 
-        {/* 表示・ジッター */}
         <div className="flex gap-2 items-center">
           <label className="flex items-center gap-1 cursor-pointer bg-gray-50 px-2 py-1 rounded">
             <input type="checkbox" checked={useJitter} onChange={(e) => setUseJitter(e.target.checked)} />
-            <span className="text-xs font-bold text-gray-600">📳 ジッター(保存時)</span>
+            <span className="text-xs font-bold text-gray-600">📳 ジッター</span>
           </label>
           <button onClick={() => setZoom(Math.max(20, zoom - 10))} className="w-6 h-6 bg-gray-200 rounded">-</button>
           <span className="text-xs font-mono w-8 text-center">{zoom}%</span>
