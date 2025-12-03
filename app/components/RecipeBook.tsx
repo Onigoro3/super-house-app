@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 
-// 辞書（省略せず記載）
+// 辞書
 const SYNONYM_MAP: Record<string, string[]> = {
   "卵": ["たまご", "玉子", "エッグ"], "たまご": ["卵", "玉子"],
   "鶏肉": ["とり肉", "鶏", "チキン", "鶏もも", "鶏むね", "ささみ"], "鶏もも肉": ["鶏肉", "とり肉", "鶏もも"],
@@ -33,10 +33,8 @@ export default function RecipeBook() {
   // 編集用ステート
   const [editingTitleId, setEditingTitleId] = useState<number | null>(null);
   const [editTitleText, setEditTitleText] = useState('');
-  
   const [editingFolder, setEditingFolder] = useState<string | null>(null);
   const [editFolderText, setEditFolderText] = useState('');
-
   const [movingRecipeId, setMovingRecipeId] = useState<number | null>(null);
   const [newFolderText, setNewFolderText] = useState('');
 
@@ -53,10 +51,7 @@ export default function RecipeBook() {
     if (saved) setCheckedItems(JSON.parse(saved));
   }, []);
 
-  // チャンネル一覧を取得（重複なし）
   const channels = Array.from(new Set(recipes.map(r => r.channel_name || 'その他')));
-
-  // グループ化
   const groupedRecipes = recipes.reduce((acc, recipe) => {
     const channel = recipe.channel_name || 'その他';
     if (!acc[channel]) acc[channel] = [];
@@ -64,51 +59,54 @@ export default function RecipeBook() {
     return acc;
   }, {} as Record<string, Recipe[]>);
 
-  // --- 操作ロジック ---
-
-  // フォルダ名変更
-  const startEditFolder = (channel: string) => {
-    setEditingFolder(channel);
-    setEditFolderText(channel);
-  };
+  // 操作ロジック
+  const startEditFolder = (channel: string) => { setEditingFolder(channel); setEditFolderText(channel); };
   const saveFolder = async (oldName: string) => {
     if (!editFolderText.trim()) return;
     await supabase.from('recipes').update({ channel_name: editFolderText }).eq('channel_name', oldName);
-    fetchData();
-    setEditingFolder(null);
+    fetchData(); setEditingFolder(null);
   };
-
-  // レシピ移動
   const moveRecipe = async (id: number, newChannel: string) => {
     if (!newChannel.trim()) return;
     await supabase.from('recipes').update({ channel_name: newChannel }).eq('id', id);
-    fetchData();
-    setMovingRecipeId(null);
-    setNewFolderText('');
+    fetchData(); setMovingRecipeId(null); setNewFolderText('');
   };
-
-  // タイトル変更
   const saveTitle = async (id: number) => {
     await supabase.from('recipes').update({ title: editTitleText }).eq('id', id);
-    setRecipes(recipes.map(r => r.id === id ? { ...r, title: editTitleText } : r));
-    setEditingTitleId(null);
+    setRecipes(recipes.map(r => r.id === id ? { ...r, title: editTitleText } : r)); setEditingTitleId(null);
   };
-
-  // その他（削除、チェック、在庫照合、買い物完了）
   const deleteRecipe = async (id: number) => { if (!confirm('削除しますか？')) return; await supabase.from('recipes').delete().eq('id', id); fetchData(); };
   const toggleCheck = (rid: number, idx: number) => { const next = { ...checkedItems, [rid]: { ...checkedItems[rid], [idx]: !checkedItems[rid]?.[idx] } }; setCheckedItems(next); localStorage.setItem('recipe_checks', JSON.stringify(next)); };
-  
+  const toggleFolder = (channel: string) => setOpenFolders(prev => ({ ...prev, [channel]: !prev[channel] }));
+
+  // ★ 修正版：在庫照合ロジック
   const findStockMatch = (ingredientText: string) => {
-    const normalize = (str: string) => str.replace(/[\u30a1-\u30f6]/g, m => String.fromCharCode(m.charCodeAt(0) - 0x60)).replace(/\s+/g, '');
+    // 文字列の正規化（スペース削除、カッコ削除、カタカナ統一）
+    const normalize = (str: string) => str
+      .replace(/\(.*\)/g, '') // カッコ書きを削除（例: "鶏肉(300g)" -> "鶏肉"）
+      .replace(/（.*）/g, '')
+      .replace(/[\u30a1-\u30f6]/g, m => String.fromCharCode(m.charCodeAt(0) - 0x60))
+      .replace(/\s+/g, '');
+    
     const target = normalize(ingredientText);
+
     return stockItems.find(stock => {
       if (stock.status !== 'ok') return false;
-      const stockNameNorm = normalize(stock.name);
+      const stockNameRaw = stock.name;
+      const stockNameNorm = normalize(stockNameRaw);
+
+      // A. 完全一致・包含チェック
       if (stockNameNorm.length > 1 && target.includes(stockNameNorm)) return true;
       if (target.length > 1 && stockNameNorm.includes(target)) return true;
+
+      // B. 辞書チェック
       for (const [key, synonyms] of Object.entries(SYNONYM_MAP)) {
         if (normalize(key) === stockNameNorm || synonyms.some(s => normalize(s) === stockNameNorm)) {
-          if (target.includes(normalize(key))) { if (normalize(key) === '油' && (target.includes('醤油') || target.includes('しょうゆ') || target.includes('正油'))) return false; return true; }
+          if (target.includes(normalize(key))) { 
+             // 特例：油と醤油の誤爆防止
+             if (normalize(key) === '油' && (target.includes('醤油') || target.includes('しょうゆ') || target.includes('正油'))) return false; 
+             return true; 
+          }
           if (synonyms.some(s => target.includes(normalize(s)))) return true;
         }
       }
@@ -133,8 +131,6 @@ export default function RecipeBook() {
     } catch (e) { alert("エラー"); } finally { setIsProcessing(false); }
   };
 
-  const toggleFolder = (channel: string) => setOpenFolders(prev => ({ ...prev, [channel]: !prev[channel] }));
-
   return (
     <div className="p-4 space-y-8 pb-24">
       <div className="bg-indigo-50 p-6 rounded-xl border-2 border-indigo-100 text-center">
@@ -147,12 +143,9 @@ export default function RecipeBook() {
         
         {Object.entries(groupedRecipes).map(([channel, channelRecipes]) => (
           <div key={channel} className="border rounded-2xl overflow-hidden shadow-sm bg-white">
-            {/* フォルダヘッダー */}
             <div className="w-full flex items-center justify-between p-4 bg-gray-50 border-b">
               <div className="flex items-center gap-3 flex-1">
                 <button onClick={() => toggleFolder(channel)} className="text-2xl">📺</button>
-                
-                {/* フォルダ名編集 */}
                 {editingFolder === channel ? (
                   <div className="flex gap-2 flex-1">
                     <input value={editFolderText} onChange={e => setEditFolderText(e.target.value)} className="border p-1 rounded w-full text-black" autoFocus onClick={e => e.stopPropagation()} />
@@ -169,19 +162,27 @@ export default function RecipeBook() {
               <button onClick={() => toggleFolder(channel)} className={`text-gray-400 text-2xl transition ${openFolders[channel] ? 'rotate-180' : ''}`}>▼</button>
             </div>
 
-            {/* レシピ一覧 */}
             {openFolders[channel] && (
               <div className="p-4 bg-white grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 animate-fadeIn">
                 {channelRecipes.map((recipe) => {
                   const isOpen = openRecipeId === recipe.id;
-                  const ingredientsWithStock = recipe.ingredients.map((ing, i) => ({ index: i, text: ing, stock: findStockMatch(ing) }));
+                  
+                  // ★修正：在庫チェックロジック適用
+                  const ingredientsWithStock = recipe.ingredients.map((ing, i) => ({ 
+                    index: i, 
+                    text: ing, 
+                    stock: findStockMatch(ing) // ここで判定
+                  }));
+                  
+                  // 在庫なし＝買い物リスト
                   const toBuy = ingredientsWithStock.filter(i => !i.stock);
+                  // 在庫あり＝在庫リスト
+                  const inStock = ingredientsWithStock.filter(i => i.stock);
+                  
                   const checkedCount = Object.values(checkedItems[recipe.id] || {}).filter(Boolean).length;
 
                   return (
                     <div key={recipe.id} className={`border rounded-xl transition-all duration-300 ${isOpen ? 'col-span-1 md:col-span-2 lg:col-span-3 shadow-lg ring-2 ring-indigo-100' : 'hover:shadow-md'}`}>
-                      
-                      {/* レシピヘッダー */}
                       <div className="p-4 border-b flex justify-between items-start bg-white rounded-t-xl">
                         <div className="flex-1 mr-2">
                           {editingTitleId === recipe.id ? (
@@ -196,25 +197,22 @@ export default function RecipeBook() {
                             </div>
                           )}
                         </div>
-                        
-                        {/* フォルダ移動メニュー */}
                         <div className="relative">
                           <button onClick={() => setMovingRecipeId(movingRecipeId === recipe.id ? null : recipe.id)} className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded hover:bg-gray-200">📂 移動</button>
                           {movingRecipeId === recipe.id && (
                             <div className="absolute right-0 top-8 bg-white border shadow-xl rounded-lg p-2 z-10 w-48">
-                              <p className="text-xs text-gray-400 mb-1">移動先フォルダを選択:</p>
+                              <p className="text-xs text-gray-400 mb-1">移動先フォルダ:</p>
                               {channels.map(c => (
                                 <button key={c} onClick={() => moveRecipe(recipe.id, c)} className="block w-full text-left text-sm p-1 hover:bg-indigo-50 rounded">{c}</button>
                               ))}
                               <div className="border-t my-1"></div>
-                              <input placeholder="新しいフォルダ名" value={newFolderText} onChange={e => setNewFolderText(e.target.value)} className="w-full border p-1 text-xs text-black mb-1" />
+                              <input placeholder="新規フォルダ名" value={newFolderText} onChange={e => setNewFolderText(e.target.value)} className="w-full border p-1 text-xs text-black mb-1" />
                               <button onClick={() => moveRecipe(recipe.id, newFolderText)} className="w-full bg-blue-600 text-white text-xs py-1 rounded">新規作成して移動</button>
                             </div>
                           )}
                         </div>
                       </div>
 
-                      {/* 詳細エリア */}
                       {isOpen && (
                         <div className="p-4 bg-gray-50 text-sm">
                           <div className="flex gap-2 mb-4">
@@ -224,17 +222,13 @@ export default function RecipeBook() {
                           
                           <div className="grid md:grid-cols-2 gap-6">
                             <div>
-                              {/* 全材料リスト（常時表示） */}
                               <div className="mb-4 bg-white p-3 rounded border border-gray-300">
                                 <h5 className="font-bold text-gray-700 mb-2 border-l-4 border-gray-500 pl-2">📝 全材料リスト</h5>
-                                <ul className="list-disc pl-5 text-gray-700 space-y-1">
-                                  {recipe.ingredients.map((ing, i) => <li key={i}>{ing}</li>)}
-                                </ul>
+                                <ul className="list-disc pl-5 text-gray-700 space-y-1">{recipe.ingredients.map((ing, i) => <li key={i}>{ing}</li>)}</ul>
                               </div>
 
-                              {/* 買い物リスト */}
-                              <div className="bg-white p-3 rounded border border-green-200">
-                                <h5 className="font-bold text-green-700 mb-2 flex items-center gap-2">🛒 買い物リスト <span className="text-xs font-normal text-gray-400">(在庫なしのみ)</span></h5>
+                              <div className="bg-white p-3 rounded border border-green-200 mb-4">
+                                <h5 className="font-bold text-green-700 mb-2 flex items-center gap-2">🛒 買い物リスト <span className="text-xs font-normal text-gray-400">(在庫なし)</span></h5>
                                 {toBuy.length === 0 ? <p className="text-xs text-gray-400">すべて在庫にあります！</p> : toBuy.map((item) => (
                                   <label key={item.index} className={`flex gap-2 p-1 cursor-pointer hover:bg-green-50 rounded ${checkedItems[recipe.id]?.[item.index] ? 'opacity-50 line-through' : ''}`}>
                                     <input type="checkbox" checked={!!checkedItems[recipe.id]?.[item.index]} onChange={() => toggleCheck(recipe.id, item.index)} className="accent-green-600" />
@@ -243,9 +237,24 @@ export default function RecipeBook() {
                                 ))}
                                 {checkedCount > 0 && <button onClick={() => completeShopping(recipe)} disabled={isProcessing} className="w-full mt-2 bg-green-600 text-white py-2 rounded text-xs font-bold">{isProcessing ? '...' : `🛍️ ${checkedCount}個を在庫に追加`}</button>}
                               </div>
+
+                              {/* ★追加：在庫ありリストの表示復活 */}
+                              {inStock.length > 0 && (
+                                <div className="bg-blue-50 p-3 rounded border border-blue-200">
+                                  <h5 className="font-bold text-blue-700 mb-2 flex items-center gap-2">🏠 在庫にありそう <span className="text-xs font-normal text-gray-500">(確認用)</span></h5>
+                                  {inStock.map((item) => (
+                                    <div key={item.index} className="flex justify-between items-center p-2 bg-white rounded border border-blue-100 mb-1">
+                                      <span className="font-bold text-gray-700">{item.text}</span>
+                                      <div className="text-right">
+                                        <span className="block font-bold text-blue-600">{item.stock?.quantity}</span>
+                                        <span className="text-xs text-gray-400">({item.stock?.name})</span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                             
-                            {/* 作り方 */}
                             <div>
                               <h5 className="font-bold text-orange-600 mb-2 border-l-4 border-orange-500 pl-2">🔥 作り方</h5>
                               <ol className="list-decimal pl-5 space-y-2 text-gray-700">{recipe.steps.map((s, i) => <li key={i} className="leading-relaxed">{s}</li>)}</ol>
