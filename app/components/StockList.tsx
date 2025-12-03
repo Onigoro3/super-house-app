@@ -37,11 +37,11 @@ export default function StockList({ view }: { view: ViewType }) {
   // 献立用
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [useQuantities, setUseQuantities] = useState<Record<number, string>>({});
+  // 白ご飯フラグ
+  const [includeRice, setIncludeRice] = useState(false);
   
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
-  
-  // ★追加：AI読み込み中フラグ
   const [loading, setLoading] = useState(false);
 
   // データ読み込み
@@ -92,22 +92,20 @@ export default function StockList({ view }: { view: ViewType }) {
     if (!selectedIds.includes(id) && val !== '') setSelectedIds([...selectedIds, id]);
   };
 
-  // ★ AI献立生成ロジック (APIを呼び出す)
+  // ★ AI献立生成ロジック
   const generateMenu = async () => {
     const selectedFoods = items.filter(i => selectedIds.includes(i.id) && i.category === 'food');
     if (selectedFoods.length === 0) { alert("食材を選んでください！"); return; }
 
     setLoading(true);
-    setRecipes([]); // 一旦クリア
+    setRecipes([]);
     setExpandedIndex(null);
 
-    // AIに送るための食材リスト作成
     const ingredientsToSend = selectedFoods.map(f => {
       const qty = useQuantities[f.id] || f.quantity || '';
       return qty ? `${f.name}(${qty})` : f.name;
     });
 
-    // 在庫にある調味料リスト
     const availableSeasonings = items
       .filter(i => i.category === 'seasoning' && i.status === 'ok')
       .map(i => i.name)
@@ -119,7 +117,8 @@ export default function StockList({ view }: { view: ViewType }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           ingredients: ingredientsToSend,
-          seasoning: availableSeasonings || '塩、こしょう、醤油など一般的な調味料'
+          seasoning: availableSeasonings || '一般的な調味料',
+          includeRice: includeRice
         }),
       });
 
@@ -140,7 +139,6 @@ export default function StockList({ view }: { view: ViewType }) {
     return (
       <div className="p-4 space-y-8 pb-24">
         
-        {/* ステップ1：食材選択エリア */}
         <div className="bg-white p-5 rounded-xl border shadow-sm">
           <h3 className="font-bold text-gray-700 border-b pb-2 mb-3">① 食材と量を選ぶ</h3>
           <div className="max-h-60 overflow-y-auto space-y-2 mb-4">
@@ -170,6 +168,21 @@ export default function StockList({ view }: { view: ViewType }) {
               ))
             )}
           </div>
+
+          {/* 白ご飯チェックボックス */}
+          <div className="mb-4 bg-orange-50 p-3 rounded-lg border border-orange-100">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input 
+                type="checkbox" 
+                checked={includeRice} 
+                onChange={() => setIncludeRice(!includeRice)}
+                className="w-5 h-5 accent-orange-500"
+              />
+              <span className="text-gray-800 font-bold">🍚 白ご飯も使いますか？</span>
+            </label>
+            <p className="text-xs text-gray-500 mt-1 pl-8">チェックすると、チャーハンや丼ものなども提案します</p>
+          </div>
+
           <button 
             onClick={generateMenu} 
             disabled={selectedIds.length === 0 || loading}
@@ -189,7 +202,7 @@ export default function StockList({ view }: { view: ViewType }) {
           </button>
         </div>
 
-        {/* ステップ2：レシピ提案 */}
+        {/* レシピ提案 */}
         {recipes.length > 0 && (
           <div className="space-y-4">
             <h3 className="font-bold text-gray-700 px-2">② AIシェフの提案メニュー (10選)</h3>
