@@ -95,13 +95,18 @@ export default function PDFEditor() {
     return { r, g, b };
   };
 
-  // ★ 保存実行処理
-  const executeSave = async () => {
+  // ★ 保存実行処理（引数でモード切替）
+  const executeSave = async (useModalSettings = true) => {
     if (!file) return;
     setIsSaving(true);
+    
+    // 上書き保存の場合はパスワードなし、ファイル名は現在の設定を使用
+    const fileName = useModalSettings ? saveFileName : `edited_${file.name}`;
+    const password = useModalSettings ? savePassword : '';
+
     try {
       const arrayBuffer = await file.arrayBuffer();
-      // ★修正点：ここで :any をつけて、TypeScriptのチェックを回避します
+      // ★ any型で回避
       const pdfDoc: any = await PDFDocument.load(arrayBuffer);
       
       pdfDoc.registerFontkit(fontkit);
@@ -154,20 +159,25 @@ export default function PDFEditor() {
         }
       }
 
-      // パスワード設定（pdfDocをanyにしたのでエラーが出なくなります）
-      if (savePassword) {
-        pdfDoc.encrypt({
-          userPassword: savePassword,
-          ownerPassword: savePassword,
-          permissions: { printing: 'highResolution', modifying: false, copying: false, annotating: false, fillingForms: false, contentAccessibility: false, documentAssembly: false }
-        });
+      // パスワード設定（ある場合のみ）
+      if (password) {
+        try {
+          pdfDoc.encrypt({
+            userPassword: password,
+            ownerPassword: password,
+            permissions: { printing: 'highResolution', modifying: false, copying: false, annotating: false, fillingForms: false, contentAccessibility: false, documentAssembly: false }
+          });
+        } catch (e) {
+          console.error("暗号化エラー", e);
+          alert("パスワード設定に失敗しました。パスワードなしで保存します。");
+        }
       }
 
       const pdfBytes = await pdfDoc.save();
       const blob = new Blob([pdfBytes as any], { type: 'application/pdf' });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
-      link.download = saveFileName || 'edited.pdf';
+      link.download = fileName;
       link.click();
 
       setShowSaveModal(false);
@@ -189,9 +199,19 @@ export default function PDFEditor() {
       <div className="bg-white border-b p-2 flex gap-2 items-center shadow-sm overflow-x-auto whitespace-nowrap h-14">
         <div className="flex gap-1 border-r pr-2 items-center">
           <label className="cursor-pointer bg-blue-50 text-blue-600 hover:bg-blue-100 px-2 py-1 rounded font-bold text-xs flex items-center gap-1">📂 開く<input type="file" accept=".pdf" onChange={handleFileChange} className="hidden" /></label>
-          <button onClick={() => setShowSaveModal(true)} disabled={!file} className="bg-yellow-50 text-yellow-700 hover:bg-yellow-100 px-2 py-1 rounded font-bold text-xs">💾 保存</button>
+          
+          {/* ★上書き保存ボタン */}
+          <button onClick={() => executeSave(false)} disabled={!file || isSaving} className="bg-green-50 text-green-700 hover:bg-green-100 px-2 py-1 rounded font-bold text-xs">
+            💾 上書き
+          </button>
+          
+          {/* ★名前をつけて保存ボタン */}
+          <button onClick={() => setShowSaveModal(true)} disabled={!file || isSaving} className="bg-yellow-50 text-yellow-700 hover:bg-yellow-100 px-2 py-1 rounded font-bold text-xs">
+            📝 別名保存
+          </button>
         </div>
 
+        {/* ...以下、既存のツールバー（省略なし）... */}
         <div className="flex gap-1 border-r pr-2 items-center">
           <button onClick={undo} disabled={history.length===0} className="px-2 py-1 text-xs font-bold bg-gray-100 hover:bg-gray-200 rounded disabled:opacity-50">↶ 元に戻す</button>
           <button onClick={() => setSelectedTool(selectedTool === 'text' ? null : 'text')} className={`px-2 py-1 rounded font-bold text-xs ${selectedTool === 'text' ? 'bg-gray-800 text-white' : 'bg-gray-100'}`}>T 文字</button>
@@ -206,7 +226,6 @@ export default function PDFEditor() {
              <input type="color" value={currentColor} onChange={(e) => handleColorChange(e.target.value)} className="w-6 h-6 border-none bg-transparent cursor-pointer p-0" />
           </div>
           <input type="number" value={currentSize} onChange={(e) => handleSizeChange(Number(e.target.value))} className="w-10 border rounded text-center text-xs p-1" title="サイズ/太さ" />
-          
           {selectedId && (
             <div className="flex gap-1 bg-gray-50 p-1 rounded">
               <button onClick={() => updateSelection(prev => ({ width: (prev.width||0) - 5 }))} className="px-1 text-[10px] bg-white border rounded">幅-</button>
@@ -243,7 +262,7 @@ export default function PDFEditor() {
         {file && numPages > 0 && <div className="w-32 bg-white border-l p-2 hidden md:block overflow-y-auto"><div className="space-y-2">{Array.from(new Array(numPages), (el, index) => (<div key={index} onClick={() => setPageNumber(index + 1)} className={`cursor-pointer border rounded p-1 text-xs text-center transition ${pageNumber === index + 1 ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'bg-gray-50 hover:bg-gray-100'}`}>{index + 1}</div>))}</div></div>}
       </div>
 
-      {/* 保存モーダル */}
+      {/* 保存設定モーダル */}
       {showSaveModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white p-6 rounded-xl shadow-xl w-full max-w-sm">
@@ -254,7 +273,7 @@ export default function PDFEditor() {
             <input type="password" value={savePassword} onChange={e => setSavePassword(e.target.value)} placeholder="設定する場合のみ入力" className="w-full border p-2 rounded mb-6" />
             <div className="flex gap-3">
               <button onClick={() => setShowSaveModal(false)} className="flex-1 bg-gray-200 text-gray-800 py-2 rounded font-bold">キャンセル</button>
-              <button onClick={executeSave} disabled={isSaving} className="flex-1 bg-indigo-600 text-white py-2 rounded font-bold">{isSaving ? '処理中...' : 'ダウンロード'}</button>
+              <button onClick={() => executeSave(true)} disabled={isSaving} className="flex-1 bg-indigo-600 text-white py-2 rounded font-bold">{isSaving ? '処理中...' : 'ダウンロード'}</button>
             </div>
           </div>
         </div>
