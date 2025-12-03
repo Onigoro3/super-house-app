@@ -21,11 +21,10 @@ type Recipe = {
   id: number; title: string; channel_name: string; url: string; 
   ingredients: string[]; steps: string[]; 
   rating: number; is_favorite: boolean; memo: string;
-  source: string; genre?: string; difficulty?: string; calories?: number; // ★追加
+  source: string; genre?: string; difficulty?: string; calories?: number;
 };
 type StockItem = { id: number; name: string; quantity: string; status: 'ok' | 'buy'; category: string; };
 
-// ★ modeプロップを受け取るように変更
 export default function RecipeBook({ mode }: { mode: 'youtube' | 'ai' }) {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [stockItems, setStockItems] = useState<StockItem[]>([]);
@@ -46,13 +45,7 @@ export default function RecipeBook({ mode }: { mode: 'youtube' | 'ai' }) {
   const [calendarDate, setCalendarDate] = useState('');
 
   const fetchData = async () => {
-    // ★モードに合わせてデータをフィルタリング
-    const { data: r } = await supabase
-      .from('recipes')
-      .select('*')
-      .eq('source', mode) // youtube か ai かで絞り込み
-      .order('created_at', { ascending: false });
-      
+    const { data: r } = await supabase.from('recipes').select('*').eq('source', mode).order('created_at', { ascending: false });
     const { data: s } = await supabase.from('items').select('*');
     if (r) setRecipes(r);
     if (s) setStockItems(s);
@@ -63,7 +56,7 @@ export default function RecipeBook({ mode }: { mode: 'youtube' | 'ai' }) {
     const saved = localStorage.getItem('recipe_checks');
     if (saved) setCheckedItems(JSON.parse(saved));
     setCalendarDate(new Date().toISOString().split('T')[0]);
-  }, [mode]); // モードが変わったら再読み込み
+  }, [mode]);
 
   const channels = Array.from(new Set(recipes.map(r => r.channel_name || 'その他')));
   const groupedRecipes = recipes.reduce((acc, recipe) => {
@@ -73,12 +66,11 @@ export default function RecipeBook({ mode }: { mode: 'youtube' | 'ai' }) {
     return acc;
   }, {} as Record<string, Recipe[]>);
 
-  // 操作ロジック
   const startEditFolder = (channel: string) => { setEditingFolder(channel); setEditFolderText(channel); };
   const saveFolder = async (oldName: string) => { if (!editFolderText.trim()) return; await supabase.from('recipes').update({ channel_name: editFolderText }).eq('channel_name', oldName).eq('source', mode); fetchData(); setEditingFolder(null); };
   const moveRecipe = async (id: number, newChannel: string) => { if (!newChannel.trim()) return; await supabase.from('recipes').update({ channel_name: newChannel }).eq('id', id); fetchData(); setMovingRecipeId(null); setNewFolderText(''); };
   const saveTitle = async (id: number) => { await supabase.from('recipes').update({ title: editTitleText }).eq('id', id); setRecipes(recipes.map(r => r.id === id ? { ...r, title: editTitleText } : r)); setEditingTitleId(null); };
-  const deleteRecipe = async (id: number) => { if (!confirm('削除しますか？')) return; await supabase.from('recipes').delete().eq('id', id); fetchData(); };
+  const deleteRecipe = async (id: number) => { if (!confirm('本当に削除しますか？')) return; await supabase.from('recipes').delete().eq('id', id); fetchData(); };
   const toggleCheck = (rid: number, idx: number) => { const next = { ...checkedItems, [rid]: { ...checkedItems[rid], [idx]: !checkedItems[rid]?.[idx] } }; setCheckedItems(next); localStorage.setItem('recipe_checks', JSON.stringify(next)); };
   const toggleFolder = (channel: string) => setOpenFolders(prev => ({ ...prev, [channel]: !prev[channel] }));
   const toggleFavorite = async (id: number, current: boolean, e: React.MouseEvent) => { e.stopPropagation(); await supabase.from('recipes').update({ is_favorite: !current }).eq('id', id); setRecipes(recipes.map(r => r.id === id ? { ...r, is_favorite: !current } : r)); };
@@ -127,23 +119,16 @@ export default function RecipeBook({ mode }: { mode: 'youtube' | 'ai' }) {
     for (const ingredientStr of recipe.ingredients) {
       const matchRecipe = ingredientStr.match(/^(.+?)\s*([0-9０-９\.]+)(.*)$/);
       if (!matchRecipe) continue;
-      const recipeName = matchRecipe[1].trim(); 
-      const recipeNum = parseFloat(matchRecipe[2]); 
-      const unit = matchRecipe[3].trim(); 
+      const recipeName = matchRecipe[1].trim(); const recipeNum = parseFloat(matchRecipe[2]); const unit = matchRecipe[3].trim(); 
       const stockItem = stockItems.find(i => i.status === 'ok' && (i.name.includes(recipeName) || recipeName.includes(i.name)));
       if (stockItem) {
         if (stockItem.category === 'seasoning') continue;
         if (stockItem.quantity) {
           const matchStock = stockItem.quantity.match(/^([0-9０-９\.]+)(.*)$/);
           if (matchStock) {
-            const stockNum = parseFloat(matchStock[1]); 
-            let newNum = stockNum - recipeNum;
-            let newStatus: 'ok' | 'buy' = 'ok';
-            let newQuantityStr = stockItem.quantity;
-            if (newNum <= 0) { newNum = 0; newStatus = 'buy'; newQuantityStr = '0' + unit; } 
-            else { newQuantityStr = Math.round(newNum * 10) / 10 + unit; }
-            await supabase.from('items').update({ quantity: newQuantityStr, status: newStatus }).eq('id', stockItem.id);
-            updatedCount++;
+            const stockNum = parseFloat(matchStock[1]); let newNum = stockNum - recipeNum; let newStatus: 'ok' | 'buy' = 'ok'; let newQuantityStr = stockItem.quantity;
+            if (newNum <= 0) { newNum = 0; newStatus = 'buy'; newQuantityStr = '0' + unit; } else { newQuantityStr = Math.round(newNum * 10) / 10 + unit; }
+            await supabase.from('items').update({ quantity: newQuantityStr, status: newStatus }).eq('id', stockItem.id); updatedCount++;
           }
         }
       }
@@ -166,7 +151,7 @@ export default function RecipeBook({ mode }: { mode: 'youtube' | 'ai' }) {
         {recipes.length === 0 && <p className="text-center text-gray-400">レシピがありません</p>}
         
         {Object.entries(groupedRecipes).map(([channel, channelRecipes]) => (
-          <div key={channel} className="border rounded-2xl overflow-hidden shadow-sm bg-white">
+          <div key={channel} className="border rounded-2xl shadow-sm bg-white">
             <div className="w-full flex items-center justify-between p-4 bg-gray-50 border-b">
               <div className="flex items-center gap-3 flex-1">
                 <button onClick={() => toggleFolder(channel)} className="text-2xl">{mode === 'youtube' ? '📺' : '🤖'}</button>
@@ -196,10 +181,10 @@ export default function RecipeBook({ mode }: { mode: 'youtube' | 'ai' }) {
                   const checkedCount = Object.values(checkedItems[recipe.id] || {}).filter(Boolean).length;
 
                   return (
-                    <div key={recipe.id} className={`border rounded-xl transition-all duration-300 ${isOpen ? 'col-span-1 md:col-span-2 lg:col-span-3 shadow-lg ring-2 ring-indigo-100' : 'hover:shadow-md'}`}>
+                    // ★修正ポイント：overflow-hidden を削除し、z-indexを調整（ドロップダウンが切れないように）
+                    <div key={recipe.id} className={`border rounded-xl transition-all duration-300 relative ${isOpen ? 'col-span-1 md:col-span-2 lg:col-span-3 shadow-lg ring-2 ring-indigo-100' : 'hover:shadow-md'}`}>
                       <div className="p-4 border-b flex justify-between items-start bg-white rounded-t-xl">
                         <div className="flex-1 mr-2">
-                          {/* ★AIレシピの場合はジャンルやカロリーも表示 */}
                           {mode === 'ai' && (
                             <div className="flex gap-2 mb-1 text-xs">
                               <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">{recipe.genre}</span>
@@ -223,35 +208,36 @@ export default function RecipeBook({ mode }: { mode: 'youtube' | 'ai' }) {
                             </div>
                           )}
                         </div>
-                        <div className="relative">
-                          <button onClick={() => setMovingRecipeId(movingRecipeId === recipe.id ? null : recipe.id)} className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded hover:bg-gray-200">📂</button>
-                          {movingRecipeId === recipe.id && (
-                            <div className="absolute right-0 top-8 bg-white border shadow-xl rounded-lg p-2 z-10 w-48">
-                              <p className="text-xs text-gray-400 mb-1">移動先フォルダ:</p>
-                              {channels.map(c => ( <button key={c} onClick={() => moveRecipe(recipe.id, c)} className="block w-full text-left text-sm p-1 hover:bg-indigo-50 rounded">{c}</button> ))}
-                              <div className="border-t my-1"></div>
-                              <input placeholder="新規フォルダ名" value={newFolderText} onChange={e => setNewFolderText(e.target.value)} className="w-full border p-1 text-xs text-black mb-1" />
-                              <button onClick={() => moveRecipe(recipe.id, newFolderText)} className="w-full bg-blue-600 text-white text-xs py-1 rounded">新規作成して移動</button>
-                            </div>
-                          )}
+                        
+                        {/* ★修正ポイント：ドロップダウンメニューの配置 */}
+                        <div className="flex items-center gap-1">
+                          <div className="relative">
+                            <button onClick={() => setMovingRecipeId(movingRecipeId === recipe.id ? null : recipe.id)} className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded hover:bg-gray-200">📂 移動</button>
+                            {movingRecipeId === recipe.id && (
+                              <div className="absolute right-0 top-8 bg-white border shadow-xl rounded-lg p-2 z-20 w-48">
+                                <p className="text-xs text-gray-400 mb-1">移動先フォルダ:</p>
+                                <div className="max-h-40 overflow-y-auto">
+                                  {channels.map(c => ( <button key={c} onClick={() => moveRecipe(recipe.id, c)} className="block w-full text-left text-sm p-1 hover:bg-indigo-50 rounded">{c}</button> ))}
+                                </div>
+                                <div className="border-t my-1"></div>
+                                <input placeholder="新規フォルダ名" value={newFolderText} onChange={e => setNewFolderText(e.target.value)} className="w-full border p-1 text-xs text-black mb-1" />
+                                <button onClick={() => moveRecipe(recipe.id, newFolderText)} className="w-full bg-blue-600 text-white text-xs py-1 rounded">新規作成して移動</button>
+                              </div>
+                            )}
+                          </div>
+                          {/* ★追加：ヘッダーにある削除ボタン */}
+                          <button onClick={() => deleteRecipe(recipe.id)} className="text-xs bg-red-50 text-red-500 px-2 py-1 rounded hover:bg-red-100">🗑️</button>
                         </div>
                       </div>
 
                       {isOpen && (
-                        <div className="p-4 bg-gray-50 text-sm">
+                        <div className="p-4 bg-gray-50 text-sm rounded-b-xl">
                           <button onClick={() => setCalendarTargetId(recipe.id)} className="w-full bg-indigo-50 text-indigo-600 border border-indigo-200 py-2 rounded-lg font-bold hover:bg-indigo-100 mb-4 flex items-center justify-center gap-2">📅 カレンダーに登録</button>
 
-                          {/* ★YouTubeモードの時だけ動画ボタンを表示 */}
                           {mode === 'youtube' && (
                             <div className="flex gap-2 mb-4">
                               <a href={recipe.url} target="_blank" className="flex-1 bg-red-600 text-white text-center py-2 rounded font-bold hover:bg-red-700">📺 動画</a>
-                              <button onClick={() => deleteRecipe(recipe.id)} className="px-3 bg-gray-200 rounded font-bold">🗑️</button>
                             </div>
-                          )}
-                          {mode === 'ai' && (
-                             <div className="flex gap-2 mb-4 justify-end">
-                               <button onClick={() => deleteRecipe(recipe.id)} className="px-3 bg-gray-200 rounded font-bold text-gray-600">🗑️ 削除</button>
-                             </div>
                           )}
                           
                           <div className="mb-4 bg-white p-2 rounded border flex items-center gap-2">
@@ -309,10 +295,7 @@ export default function RecipeBook({ mode }: { mode: 'youtube' | 'ai' }) {
           <div className="bg-white p-6 rounded-xl shadow-xl w-full max-w-sm">
             <h3 className="text-lg font-bold mb-4">📅 カレンダーに登録</h3>
             <input type="date" value={calendarDate} onChange={e => setCalendarDate(e.target.value)} className="w-full border p-3 rounded-lg mb-6 text-black" />
-            <div className="flex gap-3">
-              <button onClick={() => setCalendarTargetId(null)} className="flex-1 bg-gray-200 text-gray-800 py-2 rounded-lg">キャンセル</button>
-              <button onClick={addToCalendar} className="flex-1 bg-indigo-600 text-white py-2 rounded-lg font-bold">登録する</button>
-            </div>
+            <div className="flex gap-3"><button onClick={() => setCalendarTargetId(null)} className="flex-1 bg-gray-200 text-gray-800 py-2 rounded-lg">キャンセル</button><button onClick={addToCalendar} className="flex-1 bg-indigo-600 text-white py-2 rounded-lg font-bold">登録する</button></div>
           </div>
         </div>
       )}
