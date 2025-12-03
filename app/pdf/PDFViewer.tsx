@@ -1,6 +1,6 @@
 // app/pdf/PDFViewer.tsx
 'use client';
-import { useRef, useState, useEffect, Dispatch, SetStateAction } from 'react'; // ★追加
+import { useRef, useState, useEffect, Dispatch, SetStateAction } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
@@ -28,22 +28,24 @@ type Props = {
   pageNumber: number;
   currentColor: string;
   currentSize: number;
+  showGrid: boolean; // ★追加
   onLoadSuccess: (data: { numPages: number }) => void;
   annotations: Annotation[];
-  // ★修正: 関数形式の更新も受け取れる正しい型に変更
   setAnnotations: Dispatch<SetStateAction<Annotation[]>>;
   selectedId: number | null;
   setSelectedId: (id: number | null) => void;
+  onHistoryPush: () => void; // ★追加: 操作履歴を保存するトリガー
 };
 
 export default function PDFViewer({ 
   file, zoom, tool, setTool, pageNumber, 
-  currentColor, currentSize,
+  currentColor, currentSize, showGrid,
   onLoadSuccess, annotations, setAnnotations,
-  selectedId, setSelectedId
+  selectedId, setSelectedId, onHistoryPush
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  
+  const GRID_SIZE = 20; // グリッドの間隔
+
   const [dragState, setDragState] = useState<{
     mode: 'move' | 'resize' | null;
     startX: number;
@@ -54,6 +56,12 @@ export default function PDFViewer({
     startHeight: number;
     handle?: string;
   }>({ mode: null, startX:0, startY:0, startLeft:0, startTop:0, startWidth:0, startHeight:0 });
+
+  // 座標をグリッドに吸着させる関数
+  const snap = (val: number) => {
+    if (!showGrid) return val;
+    return Math.round(val / GRID_SIZE) * GRID_SIZE;
+  };
 
   const handlePageClick = (e: React.MouseEvent) => {
     if (dragState.mode) return;
@@ -66,17 +74,22 @@ export default function PDFViewer({
     }
 
     if (!containerRef.current) return;
+    onHistoryPush(); // 操作前に履歴保存
 
     const rect = containerRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     const scale = zoom / 100;
 
+    // グリッド吸着
+    const finalX = showGrid ? snap(x / scale) : x / scale;
+    const finalY = showGrid ? snap(y / scale) : y / scale;
+
     const newAnnot: Annotation = {
       id: Date.now(),
       type: tool,
-      x: x / scale,
-      y: y / scale,
+      x: finalX,
+      y: finalY,
       page: pageNumber,
       color: currentColor,
       size: currentSize,
@@ -94,6 +107,7 @@ export default function PDFViewer({
     e.stopPropagation();
     if (tool) return;
 
+    onHistoryPush(); // 操作開始時に履歴保存
     setSelectedId(id);
     const annot = annotations.find(a => a.id === id);
     if (!annot) return;
@@ -122,7 +136,15 @@ export default function PDFViewer({
         if (a.id !== selectedId) return a;
 
         if (dragState.mode === 'move') {
-          return { ...a, x: dragState.startLeft + deltaX, y: dragState.startTop + deltaY };
+          let newX = dragState.startLeft + deltaX;
+          let newY = dragState.startTop + deltaY;
+          
+          // 移動中もグリッド吸着
+          if (showGrid) {
+            newX = snap(newX);
+            newY = snap(newY);
+          }
+          return { ...a, x: newX, y: newY };
         }
         
         else if (dragState.mode === 'resize') {
@@ -132,6 +154,12 @@ export default function PDFViewer({
           if (dragState.handle?.includes('e')) newW = Math.max(10, dragState.startWidth + deltaX);
           if (dragState.handle?.includes('s')) newH = Math.max(10, dragState.startHeight + deltaY);
           
+          // リサイズも吸着（オプション）
+          if (showGrid) {
+             newW = snap(newW);
+             newH = snap(newH);
+          }
+
           return { ...a, width: newW, height: newH };
         }
         return a;
@@ -150,11 +178,12 @@ export default function PDFViewer({
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [dragState, selectedId, zoom, setAnnotations]);
+  }, [dragState, selectedId, zoom, setAnnotations, showGrid]);
 
   const removeAnnotation = (e: React.MouseEvent, id: number) => {
     e.preventDefault();
     if(!confirm("削除しますか？")) return;
+    onHistoryPush();
     setAnnotations(annotations.filter(a => a.id !== id));
     if (selectedId === id) setSelectedId(null);
   };
@@ -178,6 +207,17 @@ export default function PDFViewer({
           onClick={handlePageClick}
           className={`relative ${tool ? 'cursor-crosshair' : 'cursor-default'}`}
         >
+          {/* グリッドレイヤー */}
+          {showGrid && (
+            <div 
+              style={{
+                position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
+                backgroundImage: `linear-gradient(#ddd 1px, transparent 1px), linear-gradient(90deg, #ddd 1px, transparent 1px)`,
+                backgroundSize: `${GRID_SIZE * (zoom/100)}px ${GRID_SIZE * (zoom/100)}px`
+              }} 
+            />
+          )}
+
           <Page 
             pageNumber={pageNumber} 
             scale={zoom / 100} 
