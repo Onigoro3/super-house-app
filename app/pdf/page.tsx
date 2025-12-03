@@ -12,6 +12,13 @@ const PDFViewer = dynamic(() => import('./PDFViewer'), {
   loading: () => <div className="text-gray-500 p-10 text-center">Loading...</div>
 });
 
+const COLORS = [
+  { name: '黒', value: '#000000', r:0, g:0, b:0 },
+  { name: '赤', value: '#EF4444', r:0.93, g:0.26, b:0.26 },
+  { name: '青', value: '#3B82F6', r:0.23, g:0.51, b:0.96 },
+  { name: '緑', value: '#10B981', r:0.06, g:0.72, b:0.48 },
+];
+
 export default function PDFEditor() {
   const [file, setFile] = useState<File | null>(null);
   const [numPages, setNumPages] = useState<number>(0);
@@ -19,7 +26,7 @@ export default function PDFEditor() {
   const [zoom, setZoom] = useState(100);
   
   const [selectedTool, setSelectedTool] = useState<string | null>(null);
-  const [currentColor, setCurrentColor] = useState('#000000'); // 初期黒
+  const [currentColor, setCurrentColor] = useState('#000000'); 
   const [currentSize, setCurrentSize] = useState(16); 
   const [useJitter, setUseJitter] = useState(false); 
   const [showGrid, setShowGrid] = useState(false);
@@ -27,12 +34,18 @@ export default function PDFEditor() {
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [history, setHistory] = useState<Annotation[][]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  
+  // 保存用モーダル
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [saveFileName, setSaveFileName] = useState('');
+  const [savePassword, setSavePassword] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) {
       setFile(selectedFile);
+      setSaveFileName(`edited_${selectedFile.name}`); // 初期ファイル名
       setPageNumber(1);
       setAnnotations([]);
       setHistory([]);
@@ -60,7 +73,6 @@ export default function PDFEditor() {
 
   const updateSelection = (updates: Partial<Annotation> | ((prev: Annotation) => Partial<Annotation>)) => {
     if (!selectedId) return;
-    // 連続変更を防ぐため履歴はここではなく操作完了時にとるのが理想だが、簡易実装
     setAnnotations(prev => prev.map(a => {
       if (a.id !== selectedId) return a;
       const diff = typeof updates === 'function' ? updates(a) : updates;
@@ -72,13 +84,10 @@ export default function PDFEditor() {
     setCurrentColor(color);
     updateSelection({ color });
   };
-
   const handleSizeChange = (size: number) => {
     setCurrentSize(size);
     updateSelection({ size });
   };
-
-  // HEX(#RRGGBB) -> RGB(0-1) 変換
   const hexToRgb = (hex: string) => {
     const r = parseInt(hex.slice(1, 3), 16) / 255;
     const g = parseInt(hex.slice(3, 5), 16) / 255;
@@ -86,15 +95,26 @@ export default function PDFEditor() {
     return { r, g, b };
   };
 
-  const savePDF = async () => {
+  // ★ 保存実行処理
+  const executeSave = async () => {
     if (!file) return;
     setIsSaving(true);
     try {
       const arrayBuffer = await file.arrayBuffer();
       const pdfDoc = await PDFDocument.load(arrayBuffer);
       pdfDoc.registerFontkit(fontkit);
-      const fontBytes = await fetch('https://fonts.gstatic.com/s/zenmarugothic/v14/0nZcGD-wO7t1lJ94d80uCk2S_dPyw4E.ttf').then(res => res.arrayBuffer());
-      const customFont = await pdfDoc.embedFont(fontBytes);
+      
+      // フォント読み込み（エラー対策：失敗したら標準フォントにフォールバック）
+      let customFont;
+      try {
+        const fontBytes = await fetch('https://fonts.gstatic.com/s/zenmarugothic/v14/0nZcGD-wO7t1lJ94d80uCk2S_dPyw4E.ttf').then(res => res.arrayBuffer());
+        customFont = await pdfDoc.embedFont(fontBytes);
+      } catch (e) {
+        console.error("フォント読み込み失敗", e);
+        alert("日本語フォントの読み込みに失敗しました。文字が正しく表示されない可能性があります。");
+        // フォールバックが必要だが、標準フォントは日本語非対応なので警告のみ
+      }
+
       const pages = pdfDoc.getPages();
 
       for (const annot of annotations) {
@@ -117,10 +137,10 @@ export default function PDFEditor() {
           const c = hexToRgb(annot.color);
           const drawColor = rgb(c.r, c.g, c.b);
 
-          if (annot.type === 'text' && annot.content) {
+          if (customFont && annot.type === 'text' && annot.content) {
             page.drawText(annot.content, { x: pdfX, y: pdfY - annot.size, size: annot.size, font: customFont, color: drawColor, rotate: degrees(jitterRot) });
           } else if (annot.type === 'check') {
-            page.drawText('✔', { x: pdfX, y: pdfY - annot.size, size: annot.size, font: customFont, color: drawColor });
+            if (customFont) page.drawText('✔', { x: pdfX, y: pdfY - annot.size, size: annot.size, font: customFont, color: drawColor });
           } else if (annot.type === 'rect') {
             page.drawRectangle({ x: pdfX, y: pdfY - h, width: w, height: h, borderColor: drawColor, borderWidth: Math.max(2, annot.size/3) });
           } else if (annot.type === 'circle') {
@@ -132,13 +152,30 @@ export default function PDFEditor() {
           }
         }
       }
+
+      // パスワード設定
+      if (savePassword) {
+        pdfDoc.encrypt({
+          userPassword: savePassword,
+          ownerPassword: savePassword,
+          permissions: { printing: 'highResolution', modifying: false, copying: false, annotating: false, fillingForms: false, contentAccessibility: false, documentAssembly: false }
+        });
+      }
+
       const pdfBytes = await pdfDoc.save();
       const blob = new Blob([pdfBytes as any], { type: 'application/pdf' });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
-      link.download = `edited_${file.name}`;
+      link.download = saveFileName || 'edited.pdf';
       link.click();
-    } catch (e) { alert('保存エラー'); } finally { setIsSaving(false); }
+
+      setShowSaveModal(false); // モーダル閉じる
+    } catch (e: any) { 
+      console.error(e);
+      alert(`保存エラー: ${e.message}`); 
+    } finally { 
+      setIsSaving(false); 
+    }
   };
 
   return (
@@ -150,8 +187,8 @@ export default function PDFEditor() {
 
       <div className="bg-white border-b p-2 flex gap-2 items-center shadow-sm overflow-x-auto whitespace-nowrap h-14">
         <div className="flex gap-1 border-r pr-2 items-center">
-          <label className="cursor-pointer bg-blue-50 text-blue-600 hover:bg-blue-100 px-2 py-1 rounded font-bold text-xs">📂 開く<input type="file" accept=".pdf" onChange={handleFileChange} className="hidden" /></label>
-          <button onClick={savePDF} disabled={!file || isSaving} className="bg-yellow-50 text-yellow-700 hover:bg-yellow-100 px-2 py-1 rounded font-bold text-xs">{isSaving ? '...' : '💾 保存'}</button>
+          <label className="cursor-pointer bg-blue-50 text-blue-600 hover:bg-blue-100 px-2 py-1 rounded font-bold text-xs flex items-center gap-1">📂 開く<input type="file" accept=".pdf" onChange={handleFileChange} className="hidden" /></label>
+          <button onClick={() => setShowSaveModal(true)} disabled={!file} className="bg-yellow-50 text-yellow-700 hover:bg-yellow-100 px-2 py-1 rounded font-bold text-xs">💾 保存</button>
         </div>
 
         <div className="flex gap-1 border-r pr-2 items-center">
@@ -163,19 +200,12 @@ export default function PDFEditor() {
         </div>
 
         <div className="flex gap-2 items-center border-r pr-2">
-          {/* ★カラーピッカー追加 */}
           <div className="flex items-center gap-1 border rounded p-1 bg-gray-50">
              <span className="text-xs font-bold text-gray-500">色:</span>
-             <input 
-               type="color" 
-               value={currentColor} 
-               onChange={(e) => handleColorChange(e.target.value)}
-               className="w-6 h-6 border-none bg-transparent cursor-pointer p-0"
-             />
+             <input type="color" value={currentColor} onChange={(e) => handleColorChange(e.target.value)} className="w-6 h-6 border-none bg-transparent cursor-pointer p-0" />
           </div>
           <input type="number" value={currentSize} onChange={(e) => handleSizeChange(Number(e.target.value))} className="w-10 border rounded text-center text-xs p-1" title="サイズ/太さ" />
           
-          {/* 微調整ボタン */}
           {selectedId && (
             <div className="flex gap-1 bg-gray-50 p-1 rounded">
               <button onClick={() => updateSelection(prev => ({ width: (prev.width||0) - 5 }))} className="px-1 text-[10px] bg-white border rounded">幅-</button>
@@ -211,6 +241,39 @@ export default function PDFEditor() {
         </div>
         {file && numPages > 0 && <div className="w-32 bg-white border-l p-2 hidden md:block overflow-y-auto"><div className="space-y-2">{Array.from(new Array(numPages), (el, index) => (<div key={index} onClick={() => setPageNumber(index + 1)} className={`cursor-pointer border rounded p-1 text-xs text-center transition ${pageNumber === index + 1 ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'bg-gray-50 hover:bg-gray-100'}`}>{index + 1}</div>))}</div></div>}
       </div>
+
+      {/* ★ 保存設定モーダル */}
+      {showSaveModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-xl shadow-xl w-full max-w-sm">
+            <h3 className="text-lg font-bold mb-4">PDFを保存</h3>
+            
+            <label className="block text-sm font-bold text-gray-700 mb-1">ファイル名</label>
+            <input 
+              type="text" 
+              value={saveFileName} 
+              onChange={e => setSaveFileName(e.target.value)} 
+              className="w-full border p-2 rounded mb-4"
+            />
+
+            <label className="block text-sm font-bold text-gray-700 mb-1">パスワード (任意)</label>
+            <input 
+              type="password" 
+              value={savePassword} 
+              onChange={e => setSavePassword(e.target.value)} 
+              placeholder="設定する場合のみ入力"
+              className="w-full border p-2 rounded mb-6"
+            />
+
+            <div className="flex gap-3">
+              <button onClick={() => setShowSaveModal(false)} className="flex-1 bg-gray-200 text-gray-800 py-2 rounded font-bold">キャンセル</button>
+              <button onClick={executeSave} disabled={isSaving} className="flex-1 bg-indigo-600 text-white py-2 rounded font-bold">
+                {isSaving ? '処理中...' : 'ダウンロード'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
