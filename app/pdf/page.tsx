@@ -13,7 +13,7 @@ const PDFViewer = dynamic(() => import('./PDFViewer'), {
 });
 
 const COLORS = [
-  { name: '黒', value: '#000000', r:0, g:0, b:0 }, // デフォルト
+  { name: '黒', value: '#000000', r:0, g:0, b:0 },
   { name: '赤', value: '#EF4444', r:0.93, g:0.26, b:0.26 },
   { name: '青', value: '#3B82F6', r:0.23, g:0.51, b:0.96 },
   { name: '緑', value: '#10B981', r:0.06, g:0.72, b:0.48 },
@@ -31,7 +31,7 @@ export default function PDFEditor() {
   const [useJitter, setUseJitter] = useState(false); 
 
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
-  const [selectedId, setSelectedId] = useState<number | null>(null); // 選択中のID
+  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -43,7 +43,6 @@ export default function PDFEditor() {
     }
   };
 
-  // 色変更時の処理（選択中のアイテムがあれば反映）
   const handleColorChange = (color: typeof COLORS[0]) => {
     setCurrentColor(color);
     if (selectedId) {
@@ -51,7 +50,6 @@ export default function PDFEditor() {
     }
   };
 
-  // サイズ変更時の処理（選択中のアイテムがあれば反映）
   const handleSizeChange = (size: number) => {
     setCurrentSize(size);
     if (selectedId) {
@@ -75,26 +73,36 @@ export default function PDFEditor() {
         if (pageIndex >= 0 && pageIndex < pages.length) {
           const page = pages[pageIndex];
           const { height } = page.getSize();
+          
           const jitterX = useJitter ? (Math.random() - 0.5) * 4 : 0;
           const jitterY = useJitter ? (Math.random() - 0.5) * 4 : 0;
           const jitterRot = (useJitter && annot.type === 'text') ? (Math.random() - 0.5) * 5 : 0;
-          const pdfX = annot.x + jitterX;
-          const pdfY = height - annot.y + jitterY;
+
+          // 中心座標から左上座標への変換（保存時は左下基準）
+          const w = annot.width || 60;
+          const h = annot.height || 40;
+          // 線以外は中心基準で配置されているので、左上に補正
+          const topLeftX = annot.type === 'line' ? annot.x : annot.x - w/2;
+          const topLeftY = annot.type === 'line' ? annot.y : annot.y - h/2;
+
+          const pdfX = topLeftX + jitterX;
+          const pdfY = height - topLeftY + jitterY; // Y座標反転
+
           const colorObj = COLORS.find(c => c.value === annot.color) || COLORS[0];
           const drawColor = rgb(colorObj.r, colorObj.g, colorObj.b);
 
           if (annot.type === 'text' && annot.content) {
-            page.drawText(annot.content, { x: pdfX, y: pdfY - annot.size + 5, size: annot.size, font: customFont, color: drawColor, rotate: degrees(jitterRot) });
+            page.drawText(annot.content, { x: pdfX, y: pdfY - annot.size, size: annot.size, font: customFont, color: drawColor, rotate: degrees(jitterRot) });
           } else if (annot.type === 'check') {
-            page.drawText('✔', { x: pdfX, y: pdfY - annot.size + 5, size: annot.size, font: customFont, color: drawColor });
+            page.drawText('✔', { x: pdfX, y: pdfY - annot.size, size: annot.size, font: customFont, color: drawColor });
           } else if (annot.type === 'rect') {
-            page.drawRectangle({ x: pdfX - (annot.width||60)/2, y: pdfY - (annot.height||40)/2, width: annot.width||60, height: annot.height||40, borderColor: drawColor, borderWidth: annot.size/5 });
+            page.drawRectangle({ x: pdfX, y: pdfY - h, width: w, height: h, borderColor: drawColor, borderWidth: Math.max(2, annot.size/3) });
           } else if (annot.type === 'circle') {
-            page.drawEllipse({ x: pdfX, y: pdfY, xScale: (annot.width||50)/2, yScale: (annot.width||50)/2, borderColor: drawColor, borderWidth: annot.size/5 });
+            page.drawEllipse({ x: pdfX + w/2, y: pdfY - h/2, xScale: w/2, yScale: h/2, borderColor: drawColor, borderWidth: Math.max(2, annot.size/3) });
           } else if (annot.type === 'line') {
-            page.drawLine({ start: { x: pdfX, y: pdfY }, end: { x: pdfX + (annot.width||100), y: pdfY - (annot.height||0) }, color: drawColor, thickness: annot.size/5 });
+            page.drawLine({ start: { x: pdfX, y: pdfY }, end: { x: pdfX + w, y: pdfY - h }, color: drawColor, thickness: Math.max(2, annot.size/3) });
           } else if (annot.type === 'white') {
-            page.drawRectangle({ x: pdfX - (annot.width||60)/2, y: pdfY - (annot.height||20)/2, width: annot.width||60, height: annot.height||20, color: rgb(1, 1, 1) });
+            page.drawRectangle({ x: pdfX, y: pdfY - h, width: w, height: h, color: rgb(1, 1, 1) });
           }
         }
       }
@@ -104,13 +112,13 @@ export default function PDFEditor() {
       link.href = URL.createObjectURL(blob);
       link.download = `edited_${file.name}`;
       link.click();
-    } catch (e) { alert('保存エラー'); } finally { setIsSaving(false); }
+    } catch (e) { console.error(e); alert('保存エラー'); } finally { setIsSaving(false); }
   };
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col h-screen text-gray-800">
       <header className="bg-indigo-600 text-white p-3 shadow-md flex justify-between items-center z-10">
-        <div className="flex items-center gap-4"><Link href="/" className="bg-indigo-700 hover:bg-indigo-800 px-3 py-1 rounded text-sm transition">🔙</Link><h1 className="text-lg font-bold">📄 PDF Editor <span className="text-xs opacity-70">Lv.20</span></h1></div>
+        <div className="flex items-center gap-4"><Link href="/" className="bg-indigo-700 hover:bg-indigo-800 px-3 py-1 rounded text-sm transition">🔙</Link><h1 className="text-lg font-bold">📄 PDF Editor <span className="text-xs opacity-70">Lv.30</span></h1></div>
         <div className="text-sm truncate max-w-[200px]">{file ? file.name : ''}</div>
       </header>
 
@@ -146,11 +154,13 @@ export default function PDFEditor() {
         <div className="flex-1 bg-gray-500 p-8 overflow-auto flex justify-center relative">
           {file ? (
             <PDFViewer 
-              file={file} zoom={zoom} tool={selectedTool} pageNumber={pageNumber}
+              file={file} zoom={zoom} tool={selectedTool} 
+              setTool={setSelectedTool} // ★追加
+              pageNumber={pageNumber}
               currentColor={currentColor.value} currentSize={currentSize}
               onLoadSuccess={({ numPages }) => setNumPages(numPages)} 
               annotations={annotations} setAnnotations={setAnnotations}
-              selectedId={selectedId} setSelectedId={setSelectedId} // ★追加
+              selectedId={selectedId} setSelectedId={setSelectedId}
             />
           ) : (
             <div className="w-full h-full flex flex-col items-center justify-center text-gray-400 border-2 border-dashed border-gray-400 m-4 rounded-xl"><p className="text-4xl mb-4">📂</p><p className="text-lg font-bold">PDFファイルを開いてください</p></div>
