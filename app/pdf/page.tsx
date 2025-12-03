@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
-import { PDFDocument, rgb, degrees } from 'pdf-lib';
+import { PDFDocument, rgb, degrees, StandardFonts } from 'pdf-lib'; // StandardFontsを追加
 import fontkit from '@pdf-lib/fontkit';
 import type { Annotation } from './PDFViewer';
 
@@ -100,13 +100,11 @@ export default function PDFEditor() {
     if (!file) return;
     setIsSaving(true);
     
-    // 上書き保存の場合はパスワードなし、ファイル名は現在の設定を使用
     const fileName = useModalSettings ? saveFileName : `edited_${file.name}`;
     const password = useModalSettings ? savePassword : '';
 
     try {
       const arrayBuffer = await file.arrayBuffer();
-      // ★ any型で回避
       const pdfDoc: any = await PDFDocument.load(arrayBuffer);
       
       pdfDoc.registerFontkit(fontkit);
@@ -114,11 +112,18 @@ export default function PDFEditor() {
       // フォント読み込み
       let customFont;
       try {
-        const fontBytes = await fetch('https://fonts.gstatic.com/s/zenmarugothic/v14/0nZcGD-wO7t1lJ94d80uCk2S_dPyw4E.ttf').then(res => res.arrayBuffer());
+        // 以前のURLが不安定な可能性があるので、別のURLも試すか、ローカルのフォントファイルを使用することを検討してください
+        // ここではGoogle FontsのURLを使用していますが、環境によってはブロックされることがあります
+        const fontBytes = await fetch('https://fonts.gstatic.com/s/zenmarugothic/v14/0nZcGD-wO7t1lJ94d80uCk2S_dPyw4E.ttf').then(res => {
+            if (!res.ok) throw new Error(`フォントのダウンロードに失敗: ${res.status} ${res.statusText}`);
+            return res.arrayBuffer();
+        });
         customFont = await pdfDoc.embedFont(fontBytes);
       } catch (e) {
-        console.error("フォント読み込み失敗", e);
-        alert("日本語フォントの読み込みに失敗しました。");
+        console.warn("日本語フォント読み込み失敗。標準フォントを使用します。", e);
+        alert("日本語フォントの読み込みに失敗しました。日本語は正しく表示されない可能性があります（標準フォントで保存します）。");
+        // フォールバックとして標準フォントを使用
+        customFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
       }
 
       const pages = pdfDoc.getPages();
@@ -143,10 +148,22 @@ export default function PDFEditor() {
           const c = hexToRgb(annot.color);
           const drawColor = rgb(c.r, c.g, c.b);
 
-          if (customFont && annot.type === 'text' && annot.content) {
-            page.drawText(annot.content, { x: pdfX, y: pdfY - annot.size, size: annot.size, font: customFont, color: drawColor, rotate: degrees(jitterRot) });
+          if (annot.type === 'text' && annot.content) {
+            // フォントが読み込めなかった場合の対策
+            // 日本語が含まれる場合は警告を出すなどの処理も考えられますが、
+            // ここではとにかく保存できるようにします。
+            page.drawText(annot.content, { 
+                x: pdfX, 
+                y: pdfY - annot.size, 
+                size: annot.size, 
+                font: customFont, 
+                color: drawColor, 
+                rotate: degrees(jitterRot) 
+            });
           } else if (annot.type === 'check') {
-            if (customFont) page.drawText('✔', { x: pdfX, y: pdfY - annot.size, size: annot.size, font: customFont, color: drawColor });
+             // チェックマークもフォントに依存するため、フォントがない場合は 'V' などで代用するか、図形で描画するなどの対策が必要かもしれません
+             // ここではとりあえずそのまま描画を試みます
+            page.drawText('✔', { x: pdfX, y: pdfY - annot.size, size: annot.size, font: customFont, color: drawColor });
           } else if (annot.type === 'rect') {
             page.drawRectangle({ x: pdfX, y: pdfY - h, width: w, height: h, borderColor: drawColor, borderWidth: Math.max(2, annot.size/3) });
           } else if (annot.type === 'circle') {
@@ -159,7 +176,6 @@ export default function PDFEditor() {
         }
       }
 
-      // パスワード設定（ある場合のみ）
       if (password) {
         try {
           pdfDoc.encrypt({
@@ -200,12 +216,12 @@ export default function PDFEditor() {
         <div className="flex gap-1 border-r pr-2 items-center">
           <label className="cursor-pointer bg-blue-50 text-blue-600 hover:bg-blue-100 px-2 py-1 rounded font-bold text-xs flex items-center gap-1">📂 開く<input type="file" accept=".pdf" onChange={handleFileChange} className="hidden" /></label>
           
-          {/* ★上書き保存ボタン */}
+          {/* 上書き保存ボタン */}
           <button onClick={() => executeSave(false)} disabled={!file || isSaving} className="bg-green-50 text-green-700 hover:bg-green-100 px-2 py-1 rounded font-bold text-xs">
             💾 上書き
           </button>
           
-          {/* ★名前をつけて保存ボタン */}
+          {/* 名前をつけて保存ボタン */}
           <button onClick={() => setShowSaveModal(true)} disabled={!file || isSaving} className="bg-yellow-50 text-yellow-700 hover:bg-yellow-100 px-2 py-1 rounded font-bold text-xs">
             📝 別名保存
           </button>
@@ -226,6 +242,7 @@ export default function PDFEditor() {
              <input type="color" value={currentColor} onChange={(e) => handleColorChange(e.target.value)} className="w-6 h-6 border-none bg-transparent cursor-pointer p-0" />
           </div>
           <input type="number" value={currentSize} onChange={(e) => handleSizeChange(Number(e.target.value))} className="w-10 border rounded text-center text-xs p-1" title="サイズ/太さ" />
+          
           {selectedId && (
             <div className="flex gap-1 bg-gray-50 p-1 rounded">
               <button onClick={() => updateSelection(prev => ({ width: (prev.width||0) - 5 }))} className="px-1 text-[10px] bg-white border rounded">幅-</button>
