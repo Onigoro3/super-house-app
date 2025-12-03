@@ -1,44 +1,64 @@
 // app/page.tsx
 'use client';
 import { useState } from 'react';
+import Sidebar from './components/Sidebar';
 import StockList from './components/StockList';
 import MoneyList from './components/MoneyList';
 
+type ViewType = 'food' | 'seasoning' | 'other' | 'menu' | 'money';
+
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'stock' | 'money'>('stock');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [currentView, setCurrentView] = useState<ViewType>('food');
+
+  // ヘッダーのタイトルを決定
+  const getTitle = () => {
+    switch (currentView) {
+      case 'food': return '🍎 食材の在庫';
+      case 'seasoning': return '🧂 調味料の在庫';
+      case 'other': return '🧻 日用品の在庫';
+      case 'menu': return '👨‍🍳 献立・レシピ';
+      case 'money': return '💰 資産管理';
+      default: return 'Super House App';
+    }
+  };
 
   return (
     <main className="min-h-screen bg-gray-50 max-w-lg mx-auto shadow-2xl overflow-hidden relative">
-      <header className="bg-white p-4 border-b sticky top-0 z-10">
-        <h1 className="text-xl font-extrabold text-center text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-purple-600">
-          🏠 Super-House App
-        </h1>
+      
+      {/* ヘッダーエリア */}
+      <header className="bg-white p-4 shadow-sm flex items-center gap-4 sticky top-0 z-30">
+        {/* ハンバーガーボタン */}
+        <button 
+          onClick={() => setIsSidebarOpen(true)}
+          className="p-2 rounded hover:bg-gray-100"
+        >
+          <div className="w-6 h-0.5 bg-gray-600 mb-1.5"></div>
+          <div className="w-6 h-0.5 bg-gray-600 mb-1.5"></div>
+          <div className="w-6 h-0.5 bg-gray-600"></div>
+        </button>
+        
+        <h1 className="text-lg font-bold text-gray-800">{getTitle()}</h1>
       </header>
 
-      <div className="min-h-[80vh]">
-        {activeTab === 'stock' ? <StockList /> : <MoneyList />}
+      {/* サイドバー（メニュー） */}
+      <Sidebar 
+        isOpen={isSidebarOpen} 
+        onClose={() => setIsSidebarOpen(false)}
+        currentView={currentView}
+        onChangeView={setCurrentView}
+      />
+
+      {/* メイン画面の切り替え */}
+      <div className="min-h-[85vh]">
+        {currentView === 'money' ? (
+          <MoneyList />
+        ) : (
+          /* 食材、調味料、日用品、献立は StockList コンポーネントで管理 */
+          <StockList view={currentView} />
+        )}
       </div>
 
-      <nav className="fixed bottom-0 w-full max-w-lg bg-white border-t flex justify-around p-2 pb-6 z-20 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)]">
-        <button
-          onClick={() => setActiveTab('stock')}
-          className={`flex-1 flex flex-col items-center p-2 rounded-lg transition ${
-            activeTab === 'stock' ? 'text-blue-600 bg-blue-50' : 'text-gray-400 hover:bg-gray-50'
-          }`}
-        >
-          <span className="text-xl mb-1">📦</span>
-          <span className="text-xs font-bold">在庫＆献立</span>
-        </button>
-        <button
-          onClick={() => setActiveTab('money')}
-          className={`flex-1 flex flex-col items-center p-2 rounded-lg transition ${
-            activeTab === 'money' ? 'text-indigo-600 bg-indigo-50' : 'text-gray-400 hover:bg-gray-50'
-          }`}
-        >
-          <span className="text-xl mb-1">💰</span>
-          <span className="text-xs font-bold">資産管理</span>
-        </button>
-      </nav>
     </main>
   );
 }
