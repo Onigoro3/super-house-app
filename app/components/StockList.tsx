@@ -15,19 +15,17 @@ type Item = {
   status: Status;
 };
 
-// 料理単体の型
 type Dish = {
   title: string;
-  type: string; // 主菜、副菜など
+  type: string;
   difficulty: string;
   ingredients: string[];
   steps: string[];
 };
 
-// 献立セットの型（新構造）
 type MenuSet = {
   menu_title: string;
-  nutrition_point: string; // 栄養アドバイス
+  nutrition_point: string;
   total_calories: number;
   dishes: Dish[];
 };
@@ -48,11 +46,12 @@ export default function StockList({ view }: { view: ViewType }) {
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [useQuantities, setUseQuantities] = useState<Record<number, string>>({});
   const [includeRice, setIncludeRice] = useState(true);
-  // ★追加：品数選択（デフォルト1品）
   const [dishCount, setDishCount] = useState(1);
+  // ★追加：人数設定
+  const [servings, setServings] = useState(2);
   
   const [menuSets, setMenuSets] = useState<MenuSet[]>([]);
-  const [expandedIndex, setExpandedIndex] = useState<number | null>(null); // どのセットを開いているか
+  const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
@@ -63,7 +62,7 @@ export default function StockList({ view }: { view: ViewType }) {
   };
   useEffect(() => { fetchItems(); }, []);
 
-  // 追加・編集・削除・画像解析（既存のまま）
+  // アイテム操作系
   const addItem = async () => {
     if (!newItemName) return;
     const combinedQuantity = newItemCount ? `${newItemCount}${newItemUnit}` : '';
@@ -115,16 +114,19 @@ export default function StockList({ view }: { view: ViewType }) {
     if (!selectedIds.includes(id) && val !== '') setSelectedIds([...selectedIds, id]);
   };
 
-  // ★ AI献立生成ロジック（更新版）
+  // AI献立生成ロジック
   const generateMenu = async () => {
     const selectedFoods = items.filter(i => selectedIds.includes(i.id) && i.category === 'food');
     if (selectedFoods.length === 0) { alert("食材を選んでください！"); return; }
     setLoading(true); setMenuSets([]); setExpandedIndex(null);
 
+    // 食材リスト（在庫量も送る）
     const ingredientsToSend = selectedFoods.map(f => {
       const qty = useQuantities[f.id] || f.quantity || '';
-      return qty ? `${f.name}(${qty})` : f.name;
+      return qty ? `${f.name}(在庫:${qty})` : f.name;
     });
+    
+    // 調味料リスト
     const availableSeasonings = items.filter(i => i.category === 'seasoning' && i.status === 'ok').map(i => i.name).join('、');
 
     try {
@@ -133,14 +135,15 @@ export default function StockList({ view }: { view: ViewType }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           ingredients: ingredientsToSend, 
-          seasoning: availableSeasonings || '基本調味料', 
+          seasoning: availableSeasonings || 'なし', 
           includeRice,
-          dishCount // ★品数を送る
+          dishCount,
+          servings // ★人数を送る
         }),
       });
       if (!res.ok) throw new Error('Error');
       const data = await res.json();
-      setMenuSets(data); // セットリストを保存
+      setMenuSets(data);
     } catch (e) { alert('生成エラー'); } finally { setLoading(false); }
   };
 
@@ -151,6 +154,7 @@ export default function StockList({ view }: { view: ViewType }) {
     return (
       <div className="p-4 space-y-8 pb-24">
         <div className="bg-white p-5 rounded-xl border shadow-sm">
+          
           {/* 選択中リスト */}
           {selectedIds.length > 0 && (
             <div className="mb-4 bg-indigo-50 p-3 rounded-lg border border-indigo-100">
@@ -179,71 +183,66 @@ export default function StockList({ view }: { view: ViewType }) {
             ))}
           </div>
 
-          <div className="mb-4 space-y-3">
+          <div className="space-y-4 mb-4">
+            {/* ご飯チェック */}
             <label className="flex items-center gap-3 cursor-pointer bg-orange-50 p-3 rounded-lg border border-orange-100">
               <input type="checkbox" checked={includeRice} onChange={() => setIncludeRice(!includeRice)} className="w-5 h-5 accent-orange-500" />
               <span className="text-gray-800 font-bold">🍚 白ご飯も使いますか？</span>
             </label>
 
-            {/* ★品数選択スライダー */}
-            <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
-              <p className="text-sm font-bold text-blue-800 mb-2">🍽️ 作る品数: {dishCount}品</p>
-              <div className="flex gap-2">
-                {[1, 2, 3, 4].map(num => (
-                  <button
-                    key={num}
-                    onClick={() => setDishCount(num)}
-                    className={`flex-1 py-2 rounded-lg font-bold transition ${
-                      dishCount === num ? 'bg-blue-600 text-white shadow' : 'bg-white text-blue-600 border border-blue-200'
-                    }`}
-                  >
-                    {num}品
-                  </button>
-                ))}
+            <div className="grid grid-cols-2 gap-4">
+              {/* 品数選択 */}
+              <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
+                <p className="text-xs font-bold text-blue-800 mb-1">🍽️ 品数</p>
+                <div className="flex items-center justify-between bg-white rounded px-2 border">
+                  <button onClick={() => setDishCount(Math.max(1, dishCount - 1))} className="text-blue-600 font-bold px-2 py-1">-</button>
+                  <span className="font-bold text-gray-800">{dishCount}品</span>
+                  <button onClick={() => setDishCount(Math.min(5, dishCount + 1))} className="text-blue-600 font-bold px-2 py-1">+</button>
+                </div>
               </div>
-              <p className="text-xs text-blue-500 mt-1 text-center">
-                {dishCount === 1 ? '手軽に1品！' : dishCount === 2 ? '主菜＋副菜' : '栄養バランス定食！'}
-              </p>
+
+              {/* ★人数選択 */}
+              <div className="bg-green-50 p-3 rounded-lg border border-green-100">
+                <p className="text-xs font-bold text-green-800 mb-1">👨‍👩‍👧‍👦 人数</p>
+                <div className="flex items-center justify-between bg-white rounded px-2 border">
+                  <button onClick={() => setServings(Math.max(1, servings - 1))} className="text-green-600 font-bold px-2 py-1">-</button>
+                  <span className="font-bold text-gray-800">{servings}人分</span>
+                  <button onClick={() => setServings(Math.min(10, servings + 1))} className="text-green-600 font-bold px-2 py-1">+</button>
+                </div>
+              </div>
             </div>
           </div>
 
           <button onClick={generateMenu} disabled={selectedIds.length === 0 || loading} className={`w-full py-3 rounded-lg font-bold text-white shadow ${loading ? 'bg-indigo-400' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
-            {loading ? 'AIシェフが考案中...' : `✨ ${dishCount}品の献立を考える！`}
+            {loading ? 'AIシェフが考案中...' : `✨ ${servings}人分の献立を5案考える！`}
           </button>
         </div>
 
-        {/* 提案結果表示エリア */}
+        {/* 提案結果 */}
         {menuSets.length > 0 && (
           <div className="space-y-6">
             <h3 className="font-bold text-gray-700 px-2">
-              ② AIシェフの提案 ({menuSets.length}パターン)
+              ② AIシェフの提案 (5パターン)
             </h3>
             
             {menuSets.map((menu, index) => {
               const isOpen = expandedIndex === index;
               return (
                 <div key={index} className="bg-white border-2 border-indigo-50 rounded-xl shadow-sm overflow-hidden">
-                  {/* メニューの見出し */}
                   <button onClick={() => setExpandedIndex(isOpen ? null : index)} className="w-full text-left p-4 hover:bg-indigo-50 transition">
                     <div className="flex justify-between items-start">
                       <div>
                         <h4 className="font-bold text-xl text-indigo-900 mb-1">{menu.menu_title}</h4>
                         <div className="flex items-center gap-2">
-                          <span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded-full font-bold">
-                            計 {menu.total_calories}kcal
-                          </span>
+                          <span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded-full font-bold">計 {menu.total_calories}kcal</span>
                           <span className="text-xs text-gray-500">{menu.dishes.length}品構成</span>
                         </div>
                       </div>
                       <span className={`text-2xl text-indigo-300 transition ${isOpen ? 'rotate-180' : ''}`}>▼</span>
                     </div>
-                    {/* 栄養アドバイス（常に表示） */}
-                    <p className="text-sm text-gray-600 mt-3 bg-gray-50 p-2 rounded border border-gray-100">
-                      💡 {menu.nutrition_point}
-                    </p>
+                    <p className="text-sm text-gray-600 mt-3 bg-gray-50 p-2 rounded border border-gray-100">💡 {menu.nutrition_point}</p>
                   </button>
 
-                  {/* 料理ごとの詳細（展開時のみ） */}
                   {isOpen && (
                     <div className="p-4 bg-indigo-50 space-y-4 border-t">
                       {menu.dishes.map((dish, i) => (
@@ -258,7 +257,7 @@ export default function StockList({ view }: { view: ViewType }) {
                           
                           <div className="grid md:grid-cols-2 gap-4">
                             <div>
-                              <p className="text-xs font-bold text-gray-500 mb-1">🥬 材料</p>
+                              <p className="text-xs font-bold text-gray-500 mb-1">🥬 材料 ({servings}人分)</p>
                               <ul className="list-disc pl-4 text-sm text-gray-700">
                                 {dish.ingredients.map((ing, k) => <li key={k}>{ing}</li>)}
                               </ul>
@@ -303,7 +302,7 @@ export default function StockList({ view }: { view: ViewType }) {
         <input value={newItemName} onChange={e => setNewItemName(e.target.value)} placeholder="品名を追加" className="w-full border p-3 rounded-lg text-black bg-gray-50 focus:bg-white" />
         <div className="flex gap-2 h-12">
           <input type="number" value={newItemCount} onChange={e => setNewItemCount(e.target.value)} placeholder="数" className="w-16 border p-2 rounded-lg text-black text-center bg-gray-50" />
-          <select value={newItemUnit} onChange={e => setNewItemUnit(e.target.value)} className="w-20 border p-2 rounded-lg text-black bg-gray-50"><option value="個">個</option><option value="g">g</option><option value="ml">ml</option><option value="本">本</option><option value="束">束</option><option value="袋">袋</option><option value="パック">パック</option><option value="枚">枚</option><option value="玉">玉</option></select>
+          <select value={newItemUnit} onChange={e => setNewItemUnit(e.target.value)} className="w-20 border p-2 rounded-lg text-black bg-gray-50"><option value="個">個</option><option value="g">g</option><option value="ml">ml</option><option value="本">本</option><option value="束">束</option><option value="袋">袋</option><option value="パック">パック</option><option value="枚">枚</option><option value="玉">玉</option><option value="缶">缶</option><option value="箱">箱</option></select>
           <button onClick={addItem} className="flex-1 bg-blue-600 text-white rounded-lg font-bold">＋</button>
           <label className={`w-12 flex items-center justify-center bg-green-600 text-white rounded-lg font-bold cursor-pointer ${isAnalyzing?'opacity-50':''}`}><span>{isAnalyzing?'...':'📷'}</span><input type="file" accept="image/*" capture="environment" onChange={handleImageUpload} className="hidden" disabled={isAnalyzing} /></label>
         </div>
