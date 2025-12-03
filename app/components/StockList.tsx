@@ -27,9 +27,12 @@ type Recipe = {
 export default function StockList({ view }: { view: ViewType }) {
   const [items, setItems] = useState<Item[]>([]);
   
-  // 入力・編集用
+  // ★変更：入力用ステートを「数値」と「単位」に分離
   const [newItemName, setNewItemName] = useState('');
-  const [newItemQuantity, setNewItemQuantity] = useState('');
+  const [newItemCount, setNewItemCount] = useState('');
+  const [newItemUnit, setNewItemUnit] = useState('個'); // デフォルト単位
+
+  // 編集用
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState('');
   const [editQuantity, setEditQuantity] = useState('');
@@ -41,8 +44,6 @@ export default function StockList({ view }: { view: ViewType }) {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
-
-  // ★追加：画像解析中フラグ
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   // データ読み込み
@@ -52,13 +53,29 @@ export default function StockList({ view }: { view: ViewType }) {
   };
   useEffect(() => { fetchItems(); }, []);
 
-  // アイテム操作系
+  // ★変更：アイテム追加（数値と単位を合体させて保存）
   const addItem = async () => {
     if (!newItemName) return;
+    
+    // "2" + "個" = "2個" のように結合。数値が空なら空文字。
+    const combinedQuantity = newItemCount ? `${newItemCount}${newItemUnit}` : '';
     const category: Category = view === 'menu' ? 'food' : (view as Category);
-    const { error } = await supabase.from('items').insert([{ name: newItemName, quantity: newItemQuantity, category, status: 'ok' }]);
-    if (!error) { setNewItemName(''); setNewItemQuantity(''); fetchItems(); }
+    
+    const { error } = await supabase.from('items').insert([{ 
+      name: newItemName, 
+      quantity: combinedQuantity, 
+      category, 
+      status: 'ok' 
+    }]);
+    
+    if (!error) { 
+      setNewItemName(''); 
+      setNewItemCount(''); // リセット
+      // 単位はリセットせずそのまま（連続入力しやすくするため）
+      fetchItems(); 
+    }
   };
+
   const startEditing = (item: Item) => { setEditingId(item.id); setEditName(item.name); setEditQuantity(item.quantity || ''); };
   const saveEdit = async () => {
     if (editingId === null) return;
@@ -77,7 +94,6 @@ export default function StockList({ view }: { view: ViewType }) {
     await supabase.from('items').delete().eq('id', id);
   };
 
-  // 献立用チェックボックス
   const toggleSelection = (id: number) => {
     if (selectedIds.includes(id)) {
       setSelectedIds(selectedIds.filter(sid => sid !== id));
@@ -91,86 +107,47 @@ export default function StockList({ view }: { view: ViewType }) {
     if (!selectedIds.includes(id) && val !== '') setSelectedIds([...selectedIds, id]);
   };
 
-  // ★追加：画像アップロード＆解析処理
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     setIsAnalyzing(true);
     const reader = new FileReader();
-    
     reader.onloadend = async () => {
       const base64 = reader.result as string;
       try {
-        const res = await fetch('/api/receipt', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ imageBase64: base64 }),
-        });
-
+        const res = await fetch('/api/receipt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ imageBase64: base64 }) });
         if (!res.ok) throw new Error('分析失敗');
         const itemsData: any[] = await res.json();
-        
-        if (itemsData.length === 0) {
-          alert('食材が見つかりませんでした。');
-          return;
-        }
-
-        // 取得したアイテムを一括登録
-        let count = 0;
+        if (itemsData.length === 0) { alert('食材が見つかりませんでした。'); return; }
         for (const item of itemsData) {
-           const { error } = await supabase.from('items').insert([{
-             name: item.name, 
-             quantity: item.quantity || '', 
-             category: item.category || 'food', 
-             status: 'ok'
-           }]);
-           if (!error) count++;
+           await supabase.from('items').insert([{ name: item.name, quantity: item.quantity || '', category: item.category || 'food', status: 'ok' }]);
         }
-        
-        alert(`${count}個のアイテムを在庫に追加しました！`);
-        fetchItems(); // リスト更新
-      } catch (err) {
-        alert('画像の解析に失敗しました。もう一度試してください。');
-        console.error(err);
-      } finally {
-        setIsAnalyzing(false);
-        // 同じファイルを再度選べるようにリセット
-        e.target.value = '';
-      }
+        alert(`${itemsData.length}個のアイテムを在庫に追加しました！`); fetchItems();
+      } catch (err) { alert('画像の解析に失敗しました。'); } finally { setIsAnalyzing(false); e.target.value = ''; }
     };
     reader.readAsDataURL(file);
   };
 
-  // AI献立生成
   const generateMenu = async () => {
     const selectedFoods = items.filter(i => selectedIds.includes(i.id) && i.category === 'food');
     if (selectedFoods.length === 0) { alert("食材を選んでください！"); return; }
     setLoading(true); setRecipes([]); setExpandedIndex(null);
-
     const ingredientsToSend = selectedFoods.map(f => {
       const qty = useQuantities[f.id] || f.quantity || '';
       return qty ? `${f.name}(${qty})` : f.name;
     });
     const availableSeasonings = items.filter(i => i.category === 'seasoning' && i.status === 'ok').map(i => i.name).join('、');
-
     try {
-      const res = await fetch('/api/menu', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ingredients: ingredientsToSend, seasoning: availableSeasonings || '基本調味料', includeRice }),
-      });
+      const res = await fetch('/api/menu', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ingredients: ingredientsToSend, seasoning: availableSeasonings || '基本調味料', includeRice }), });
       if (!res.ok) throw new Error('Error');
       const data = await res.json();
       setRecipes(data);
     } catch (e) { alert('生成エラー'); } finally { setLoading(false); }
   };
 
-  // ★★★ 献立・レシピ画面 ★★★
   if (view === 'menu') {
     const foodStock = items.filter(i => i.category === 'food' && i.status === 'ok');
     const selectedItemsList = items.filter(i => selectedIds.includes(i.id));
-
     return (
       <div className="p-4 space-y-8 pb-24">
         <div className="bg-white p-5 rounded-xl border shadow-sm">
@@ -180,14 +157,12 @@ export default function StockList({ view }: { view: ViewType }) {
               <div className="flex flex-wrap gap-2">
                 {selectedItemsList.map(item => (
                   <span key={item.id} className="bg-white text-indigo-700 px-3 py-1 rounded-full text-sm shadow-sm border border-indigo-200 flex items-center gap-1">
-                    {item.name}
-                    <button onClick={() => toggleSelection(item.id)} className="text-indigo-400 hover:text-red-500 font-bold ml-1">×</button>
+                    {item.name} <button onClick={() => toggleSelection(item.id)} className="text-indigo-400 hover:text-red-500 font-bold ml-1">×</button>
                   </span>
                 ))}
               </div>
             </div>
           )}
-
           <h3 className="font-bold text-gray-700 border-b pb-2 mb-3">① 食材を選ぶ</h3>
           <div className="max-h-60 overflow-y-auto space-y-2 mb-4">
             {foodStock.length === 0 ? <p className="text-sm text-gray-400">在庫なし</p> : foodStock.map(item => (
@@ -201,19 +176,16 @@ export default function StockList({ view }: { view: ViewType }) {
               </div>
             ))}
           </div>
-
           <div className="mb-4 bg-orange-50 p-3 rounded-lg border border-orange-100">
             <label className="flex items-center gap-3 cursor-pointer">
               <input type="checkbox" checked={includeRice} onChange={() => setIncludeRice(!includeRice)} className="w-5 h-5 accent-orange-500" />
               <span className="text-gray-800 font-bold">🍚 白ご飯も使いますか？</span>
             </label>
           </div>
-
           <button onClick={generateMenu} disabled={selectedIds.length === 0 || loading} className={`w-full py-3 rounded-lg font-bold text-white shadow ${loading ? 'bg-indigo-400' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
             {loading ? 'AIが考案中...' : `✨ ${selectedIds.length}個の食材で10案考える！`}
           </button>
         </div>
-
         {recipes.length > 0 && (
           <div className="space-y-4">
             <h3 className="font-bold text-gray-700 px-2">② AIシェフの提案 (10選)</h3>
@@ -250,7 +222,6 @@ export default function StockList({ view }: { view: ViewType }) {
     );
   }
 
-  // ★★★ 在庫リスト画面 ★★★
   const categoryMap: Record<string, Category> = { food: 'food', seasoning: 'seasoning', other: 'other' };
   const targetCategory = categoryMap[view];
   const displayItems = items.filter(i => i.category === targetCategory);
@@ -268,24 +239,67 @@ export default function StockList({ view }: { view: ViewType }) {
         </div>
       )}
       
-      {/* 入力フォーム + カメラボタン */}
-      <div className="bg-white p-3 rounded-xl border shadow-sm flex gap-2 items-center">
-        <input value={newItemName} onChange={e => setNewItemName(e.target.value)} placeholder="品名を追加" className="border p-2 rounded flex-1 text-black" />
-        <input value={newItemQuantity} onChange={e => setNewItemQuantity(e.target.value)} placeholder="分量" className="border p-2 rounded w-20 text-black" />
-        <button onClick={addItem} className="bg-blue-600 text-white px-4 py-2 rounded font-bold">＋</button>
+      {/* ★変更：入力フォーム（スマホ対応・2段組みレイアウト） */}
+      <div className="bg-white p-4 rounded-xl border shadow-sm flex flex-col gap-3">
+        {/* 上段：品名 */}
+        <input 
+          value={newItemName} 
+          onChange={e => setNewItemName(e.target.value)} 
+          placeholder="品名を追加 (例: キャベツ)" 
+          className="w-full border p-3 rounded-lg text-black bg-gray-50 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none" 
+        />
         
-        {/* ★カメラボタン */}
-        <label className={`flex items-center justify-center bg-green-600 text-white px-3 py-2 rounded font-bold cursor-pointer hover:bg-green-700 ${isAnalyzing ? 'opacity-50' : ''}`}>
-          <span>{isAnalyzing ? '...' : '📷'}</span>
+        {/* 下段：数量・単位・ボタン */}
+        <div className="flex gap-2 h-12">
+          {/* 数量入力 (小さめ) */}
           <input 
-            type="file" 
-            accept="image/*" 
-            capture="environment" 
-            onChange={handleImageUpload} 
-            className="hidden" 
-            disabled={isAnalyzing}
+            type="number"
+            value={newItemCount} 
+            onChange={e => setNewItemCount(e.target.value)} 
+            placeholder="数" 
+            className="w-16 border p-2 rounded-lg text-black text-center bg-gray-50 focus:bg-white" 
           />
-        </label>
+          
+          {/* 単位選択 (ドロップダウン) */}
+          <select 
+            value={newItemUnit} 
+            onChange={e => setNewItemUnit(e.target.value)}
+            className="w-20 border p-2 rounded-lg text-black bg-gray-50 focus:bg-white"
+          >
+            <option value="個">個</option>
+            <option value="g">g</option>
+            <option value="ml">ml</option>
+            <option value="本">本</option>
+            <option value="束">束</option>
+            <option value="袋">袋</option>
+            <option value="パック">パック</option>
+            <option value="枚">枚</option>
+            <option value="玉">玉</option>
+            <option value="缶">缶</option>
+            <option value="箱">箱</option>
+          </select>
+
+          {/* 追加ボタン (残りの幅を埋める) */}
+          <button 
+            onClick={addItem} 
+            className="flex-1 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 active:scale-95 transition"
+          >
+            ＋
+          </button>
+          
+          {/* カメラボタン (アイコンのみ) */}
+          <label className={`w-12 flex items-center justify-center bg-green-600 text-white rounded-lg font-bold cursor-pointer hover:bg-green-700 active:scale-95 transition ${isAnalyzing ? 'opacity-50' : ''}`}>
+            <span>{isAnalyzing ? '...' : '📷'}</span>
+            <input 
+              type="file" 
+              accept="image/*" 
+              capture="environment" 
+              onChange={handleImageUpload} 
+              className="hidden" 
+              disabled={isAnalyzing}
+            />
+          </label>
+        </div>
       </div>
 
       <div className="space-y-2">
