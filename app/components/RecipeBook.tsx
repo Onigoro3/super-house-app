@@ -26,11 +26,9 @@ export default function RecipeBook() {
   const [checkedItems, setCheckedItems] = useState<Record<number, Record<number, boolean>>>({});
   const [isProcessing, setIsProcessing] = useState(false);
   
-  // UI制御用ステート
   const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
   const [openRecipeId, setOpenRecipeId] = useState<number | null>(null);
   
-  // 編集用ステート
   const [editingTitleId, setEditingTitleId] = useState<number | null>(null);
   const [editTitleText, setEditTitleText] = useState('');
   const [editingFolder, setEditingFolder] = useState<string | null>(null);
@@ -59,7 +57,6 @@ export default function RecipeBook() {
     return acc;
   }, {} as Record<string, Recipe[]>);
 
-  // 操作ロジック
   const startEditFolder = (channel: string) => { setEditingFolder(channel); setEditFolderText(channel); };
   const saveFolder = async (oldName: string) => {
     if (!editFolderText.trim()) return;
@@ -79,31 +76,17 @@ export default function RecipeBook() {
   const toggleCheck = (rid: number, idx: number) => { const next = { ...checkedItems, [rid]: { ...checkedItems[rid], [idx]: !checkedItems[rid]?.[idx] } }; setCheckedItems(next); localStorage.setItem('recipe_checks', JSON.stringify(next)); };
   const toggleFolder = (channel: string) => setOpenFolders(prev => ({ ...prev, [channel]: !prev[channel] }));
 
-  // ★ 修正版：在庫照合ロジック
   const findStockMatch = (ingredientText: string) => {
-    // 文字列の正規化（スペース削除、カッコ削除、カタカナ統一）
-    const normalize = (str: string) => str
-      .replace(/\(.*\)/g, '') // カッコ書きを削除（例: "鶏肉(300g)" -> "鶏肉"）
-      .replace(/（.*）/g, '')
-      .replace(/[\u30a1-\u30f6]/g, m => String.fromCharCode(m.charCodeAt(0) - 0x60))
-      .replace(/\s+/g, '');
-    
+    const normalize = (str: string) => str.replace(/\(.*\)/g, '').replace(/（.*）/g, '').replace(/[\u30a1-\u30f6]/g, m => String.fromCharCode(m.charCodeAt(0) - 0x60)).replace(/\s+/g, '');
     const target = normalize(ingredientText);
-
     return stockItems.find(stock => {
       if (stock.status !== 'ok') return false;
-      const stockNameRaw = stock.name;
-      const stockNameNorm = normalize(stockNameRaw);
-
-      // A. 完全一致・包含チェック
+      const stockNameNorm = normalize(stock.name);
       if (stockNameNorm.length > 1 && target.includes(stockNameNorm)) return true;
       if (target.length > 1 && stockNameNorm.includes(target)) return true;
-
-      // B. 辞書チェック
       for (const [key, synonyms] of Object.entries(SYNONYM_MAP)) {
         if (normalize(key) === stockNameNorm || synonyms.some(s => normalize(s) === stockNameNorm)) {
           if (target.includes(normalize(key))) { 
-             // 特例：油と醤油の誤爆防止
              if (normalize(key) === '油' && (target.includes('醤油') || target.includes('しょうゆ') || target.includes('正油'))) return false; 
              return true; 
           }
@@ -114,6 +97,7 @@ export default function RecipeBook() {
     });
   };
 
+  // 買い物完了（在庫追加）
   const completeShopping = async (recipe: Recipe) => { 
     const checks = checkedItems[recipe.id] || {}; const indices = Object.keys(checks).filter(k => checks[Number(k)]).map(Number);
     if (indices.length === 0) return alert("購入したものにチェックを！"); if (!confirm(`${indices.length}個を在庫に追加しますか？`)) return;
@@ -129,6 +113,42 @@ export default function RecipeBook() {
       }
       alert("在庫に追加しました！"); const next = { ...checkedItems }; delete next[recipe.id]; setCheckedItems(next); localStorage.setItem('recipe_checks', JSON.stringify(next)); fetchData();
     } catch (e) { alert("エラー"); } finally { setIsProcessing(false); }
+  };
+
+  // ★調理完了＆在庫引き算（調味料除外）
+  const handleCooked = async (recipe: Recipe) => {
+    if (!confirm(`「${recipe.title}」を作りましたか？\n在庫から材料（調味料以外）を減らします。`)) return;
+    let updatedCount = 0;
+    
+    for (const ingredientStr of recipe.ingredients) {
+      const matchRecipe = ingredientStr.match(/^(.+?)\s*([0-9０-９\.]+)(.*)$/);
+      if (!matchRecipe) continue;
+      const recipeName = matchRecipe[1].trim(); 
+      const recipeNum = parseFloat(matchRecipe[2]); 
+      const unit = matchRecipe[3].trim(); 
+      
+      const stockItem = stockItems.find(i => i.status === 'ok' && (i.name.includes(recipeName) || recipeName.includes(i.name)));
+      
+      if (stockItem) {
+        // 調味料は減らさない
+        if (stockItem.category === 'seasoning') continue;
+
+        if (stockItem.quantity) {
+          const matchStock = stockItem.quantity.match(/^([0-9０-９\.]+)(.*)$/);
+          if (matchStock) {
+            const stockNum = parseFloat(matchStock[1]); 
+            let newNum = stockNum - recipeNum;
+            let newStatus: 'ok' | 'buy' = 'ok';
+            let newQuantityStr = stockItem.quantity;
+            if (newNum <= 0) { newNum = 0; newStatus = 'buy'; newQuantityStr = '0' + unit; } 
+            else { newQuantityStr = Math.round(newNum * 10) / 10 + unit; }
+            await supabase.from('items').update({ quantity: newQuantityStr, status: newStatus }).eq('id', stockItem.id);
+            updatedCount++;
+          }
+        }
+      }
+    }
+    alert(`${updatedCount}個の食材の在庫を更新しました！`); fetchData();
   };
 
   return (
@@ -166,19 +186,9 @@ export default function RecipeBook() {
               <div className="p-4 bg-white grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 animate-fadeIn">
                 {channelRecipes.map((recipe) => {
                   const isOpen = openRecipeId === recipe.id;
-                  
-                  // ★修正：在庫チェックロジック適用
-                  const ingredientsWithStock = recipe.ingredients.map((ing, i) => ({ 
-                    index: i, 
-                    text: ing, 
-                    stock: findStockMatch(ing) // ここで判定
-                  }));
-                  
-                  // 在庫なし＝買い物リスト
+                  const ingredientsWithStock = recipe.ingredients.map((ing, i) => ({ index: i, text: ing, stock: findStockMatch(ing) }));
                   const toBuy = ingredientsWithStock.filter(i => !i.stock);
-                  // 在庫あり＝在庫リスト
                   const inStock = ingredientsWithStock.filter(i => i.stock);
-                  
                   const checkedCount = Object.values(checkedItems[recipe.id] || {}).filter(Boolean).length;
 
                   return (
@@ -238,7 +248,6 @@ export default function RecipeBook() {
                                 {checkedCount > 0 && <button onClick={() => completeShopping(recipe)} disabled={isProcessing} className="w-full mt-2 bg-green-600 text-white py-2 rounded text-xs font-bold">{isProcessing ? '...' : `🛍️ ${checkedCount}個を在庫に追加`}</button>}
                               </div>
 
-                              {/* ★追加：在庫ありリストの表示復活 */}
                               {inStock.length > 0 && (
                                 <div className="bg-blue-50 p-3 rounded border border-blue-200">
                                   <h5 className="font-bold text-blue-700 mb-2 flex items-center gap-2">🏠 在庫にありそう <span className="text-xs font-normal text-gray-500">(確認用)</span></h5>
@@ -260,6 +269,15 @@ export default function RecipeBook() {
                               <ol className="list-decimal pl-5 space-y-2 text-gray-700">{recipe.steps.map((s, i) => <li key={i} className="leading-relaxed">{s}</li>)}</ol>
                             </div>
                           </div>
+
+                          {/* ★作ったボタン（レシピ帳にも追加） */}
+                          <button 
+                            onClick={() => handleCooked(recipe)}
+                            className="w-full mt-4 bg-green-500 text-white py-3 rounded-lg font-bold shadow hover:bg-green-600 transition flex items-center justify-center gap-2"
+                          >
+                            😋 美味しくできた！ <span className="text-xs font-normal">(在庫から減らす / 調味料除く)</span>
+                          </button>
+
                         </div>
                       )}
                     </div>

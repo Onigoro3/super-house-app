@@ -43,8 +43,6 @@ export default function StockList({ view }: { view: ViewType }) {
   const [useQuantities, setUseQuantities] = useState<Record<number, string>>({});
   const [includeRice, setIncludeRice] = useState(true);
   const [dishCount, setDishCount] = useState(1);
-  
-  // ★変更：大人と子供の人数を分ける
   const [adultCount, setAdultCount] = useState(2);
   const [childCount, setChildCount] = useState(0);
   
@@ -59,7 +57,6 @@ export default function StockList({ view }: { view: ViewType }) {
   };
   useEffect(() => { fetchItems(); }, []);
 
-  // アイテム操作
   const addItem = async () => {
     if (!newItemName) return;
     const combinedQuantity = newItemCount ? `${newItemCount}${newItemUnit}` : '';
@@ -110,30 +107,20 @@ export default function StockList({ view }: { view: ViewType }) {
     reader.readAsDataURL(file);
   };
 
-  // 献立生成
   const generateMenu = async () => {
     const selectedFoods = items.filter(i => selectedIds.includes(i.id) && i.category === 'food');
     if (selectedFoods.length === 0) { alert("食材を選んでください！"); return; }
     setLoading(true); setMenuSets([]); setExpandedIndex(null);
-
     const ingredientsToSend = selectedFoods.map(f => {
       const qty = useQuantities[f.id] || f.quantity || '';
       return qty ? `${f.name}(在庫:${qty})` : f.name;
     });
     const availableSeasonings = items.filter(i => i.category === 'seasoning' && i.status === 'ok').map(i => i.name).join('、');
-
     try {
       const res = await fetch('/api/menu', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          ingredients: ingredientsToSend, 
-          seasoning: availableSeasonings || 'なし', 
-          includeRice, 
-          dishCount, 
-          adultCount, // ★大人
-          childCount  // ★子供
-        }),
+        body: JSON.stringify({ ingredients: ingredientsToSend, seasoning: availableSeasonings || 'なし', includeRice, dishCount, adultCount, childCount }),
       });
       if (!res.ok) throw new Error('Error');
       const data = await res.json();
@@ -141,9 +128,9 @@ export default function StockList({ view }: { view: ViewType }) {
     } catch (e) { alert('生成エラー'); } finally { setLoading(false); }
   };
 
-  // 在庫引き算
+  // 在庫引き算（調味料除外）
   const handleCooked = async (dish: Dish) => {
-    if (!confirm(`「${dish.title}」を作りましたか？\n在庫から材料を減らします。`)) return;
+    if (!confirm(`「${dish.title}」を作りましたか？\n在庫から材料（調味料以外）を減らします。`)) return;
     let updatedCount = 0;
     for (const ingredientStr of dish.ingredients) {
       const matchRecipe = ingredientStr.match(/^(.+?)\s*([0-9０-９\.]+)(.*)$/);
@@ -151,18 +138,25 @@ export default function StockList({ view }: { view: ViewType }) {
       const recipeName = matchRecipe[1].trim(); 
       const recipeNum = parseFloat(matchRecipe[2]); 
       const unit = matchRecipe[3].trim(); 
+      
       const stockItem = items.find(i => i.status === 'ok' && (i.name.includes(recipeName) || recipeName.includes(i.name)));
-      if (stockItem && stockItem.quantity) {
-        const matchStock = stockItem.quantity.match(/^([0-9０-９\.]+)(.*)$/);
-        if (matchStock) {
-          const stockNum = parseFloat(matchStock[1]); 
-          let newNum = stockNum - recipeNum;
-          let newStatus: Status = 'ok';
-          let newQuantityStr = stockItem.quantity;
-          if (newNum <= 0) { newNum = 0; newStatus = 'buy'; newQuantityStr = '0' + unit; } 
-          else { newQuantityStr = Math.round(newNum * 10) / 10 + unit; }
-          await supabase.from('items').update({ quantity: newQuantityStr, status: newStatus }).eq('id', stockItem.id);
-          updatedCount++;
+      
+      if (stockItem) {
+        // ★修正点：調味料（seasoning）なら減らさない
+        if (stockItem.category === 'seasoning') continue;
+
+        if (stockItem.quantity) {
+          const matchStock = stockItem.quantity.match(/^([0-9０-９\.]+)(.*)$/);
+          if (matchStock) {
+            const stockNum = parseFloat(matchStock[1]); 
+            let newNum = stockNum - recipeNum;
+            let newStatus: Status = 'ok';
+            let newQuantityStr = stockItem.quantity;
+            if (newNum <= 0) { newNum = 0; newStatus = 'buy'; newQuantityStr = '0' + unit; } 
+            else { newQuantityStr = Math.round(newNum * 10) / 10 + unit; }
+            await supabase.from('items').update({ quantity: newQuantityStr, status: newStatus }).eq('id', stockItem.id);
+            updatedCount++;
+          }
         }
       }
     }
@@ -202,35 +196,23 @@ export default function StockList({ view }: { view: ViewType }) {
               <input type="checkbox" checked={includeRice} onChange={() => setIncludeRice(!includeRice)} className="w-5 h-5 accent-orange-500" />
               <span className="text-gray-800 font-bold">🍚 白ご飯も使いますか？</span>
             </label>
-            
-            {/* 品数選択 */}
-            <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
-              <p className="text-xs font-bold text-blue-800 mb-1">🍽️ 品数</p>
-              <div className="flex items-center justify-between bg-white rounded px-2 border"><button onClick={() => setDishCount(Math.max(1, dishCount - 1))} className="text-blue-600 font-bold px-2 py-1">-</button><span className="font-bold text-gray-800">{dishCount}品</span><button onClick={() => setDishCount(Math.min(5, dishCount + 1))} className="text-blue-600 font-bold px-2 py-1">+</button></div>
-            </div>
-
-            {/* ★人数選択（大人・子供） */}
             <div className="grid grid-cols-2 gap-4">
+              <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
+                <p className="text-xs font-bold text-blue-800 mb-1">🍽️ 品数</p>
+                <div className="flex items-center justify-between bg-white rounded px-2 border"><button onClick={() => setDishCount(Math.max(1, dishCount - 1))} className="text-blue-600 font-bold px-2 py-1">-</button><span className="font-bold text-gray-800">{dishCount}品</span><button onClick={() => setDishCount(Math.min(5, dishCount + 1))} className="text-blue-600 font-bold px-2 py-1">+</button></div>
+              </div>
               <div className="bg-green-50 p-3 rounded-lg border border-green-100">
                 <p className="text-xs font-bold text-green-800 mb-1">👨 大人</p>
-                <div className="flex items-center justify-between bg-white rounded px-2 border">
-                  <button onClick={() => setAdultCount(Math.max(1, adultCount - 1))} className="text-green-600 font-bold px-2 py-1">-</button>
-                  <span className="font-bold text-gray-800">{adultCount}人</span>
-                  <button onClick={() => setAdultCount(Math.min(10, adultCount + 1))} className="text-green-600 font-bold px-2 py-1">+</button>
-                </div>
+                <div className="flex items-center justify-between bg-white rounded px-2 border"><button onClick={() => setAdultCount(Math.max(1, adultCount - 1))} className="text-green-600 font-bold px-2 py-1">-</button><span className="font-bold text-gray-800">{adultCount}人</span><button onClick={() => setAdultCount(Math.min(10, adultCount + 1))} className="text-green-600 font-bold px-2 py-1">+</button></div>
               </div>
               <div className="bg-yellow-50 p-3 rounded-lg border border-yellow-100">
                 <p className="text-xs font-bold text-yellow-800 mb-1">🧒 子供</p>
-                <div className="flex items-center justify-between bg-white rounded px-2 border">
-                  <button onClick={() => setChildCount(Math.max(0, childCount - 1))} className="text-yellow-600 font-bold px-2 py-1">-</button>
-                  <span className="font-bold text-gray-800">{childCount}人</span>
-                  <button onClick={() => setChildCount(Math.min(10, childCount + 1))} className="text-yellow-600 font-bold px-2 py-1">+</button>
-                </div>
+                <div className="flex items-center justify-between bg-white rounded px-2 border"><button onClick={() => setChildCount(Math.max(0, childCount - 1))} className="text-yellow-600 font-bold px-2 py-1">-</button><span className="font-bold text-gray-800">{childCount}人</span><button onClick={() => setChildCount(Math.min(10, childCount + 1))} className="text-yellow-600 font-bold px-2 py-1">+</button></div>
               </div>
             </div>
           </div>
           <button onClick={generateMenu} disabled={selectedIds.length === 0 || loading} className={`w-full py-3 rounded-lg font-bold text-white shadow ${loading ? 'bg-indigo-400' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
-            {loading ? 'AIシェフが考案中...' : `✨ 献立を5案考える！`}
+            {loading ? 'AIシェフが考案中...' : `✨ ${dishCount}品の献立を5案考える！`}
           </button>
         </div>
 
@@ -257,7 +239,7 @@ export default function StockList({ view }: { view: ViewType }) {
                             <span className="text-xs font-bold text-orange-500">{dish.difficulty}</span>
                           </div>
                           <div className="grid md:grid-cols-2 gap-4">
-                            <div><p className="text-xs font-bold text-gray-500 mb-1">🥬 材料 (大人{adultCount}人・子供{childCount}人)</p><ul className="list-disc pl-4 text-sm text-gray-700">{dish.ingredients.map((ing, k) => <li key={k}>{ing}</li>)}</ul></div>
+                            <div><p className="text-xs font-bold text-gray-500 mb-1">🥬 材料</p><ul className="list-disc pl-4 text-sm text-gray-700">{dish.ingredients.map((ing, k) => <li key={k}>{ing}</li>)}</ul></div>
                             <div><p className="text-xs font-bold text-gray-500 mb-1">🔥 作り方</p><ol className="list-decimal pl-4 text-sm text-gray-700 space-y-2">{dish.steps.map((step, k) => <li key={k}>{step}</li>)}</ol></div>
                           </div>
                           <button onClick={() => handleCooked(dish)} className="w-full mt-4 bg-green-500 text-white py-2 rounded-lg font-bold shadow hover:bg-green-600 transition flex items-center justify-center gap-2">😋 美味しくできた！ <span className="text-xs font-normal">(在庫から減らす)</span></button>
