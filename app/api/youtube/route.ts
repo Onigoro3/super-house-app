@@ -3,10 +3,7 @@ import { NextResponse } from 'next/server';
 import { Innertube, UniversalCache } from 'youtubei.js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-if (!process.env.GEMINI_API_KEY) {
-  console.error("エラー: GEMINI_API_KEY が設定されていません");
-}
-
+if (!process.env.GEMINI_API_KEY) console.error("エラー: GEMINI_API_KEY が設定されていません");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
 export async function POST(req: Request) {
@@ -29,28 +26,26 @@ export async function POST(req: Request) {
 
     if (!transcriptData?.transcript) throw new Error('字幕がありません');
 
-    // 安全にテキスト抽出
+    // ★チャンネル名を取得
+    const channelName = info.basic_info.author || '不明なチャンネル';
+
+    // テキスト抽出
     const data: any = transcriptData;
     const segments = data?.transcript?.content?.body?.initial_segments;
     if (!segments) throw new Error('字幕データ解析失敗');
-
     const fullText = segments.map((segment: any) => segment.snippet.text).join(' ');
 
-    // AIモデル
+    // AI分析
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
     
-    // ★改良ポイント：表記統一の指示を追加
     const prompt = `
       あなたはプロの料理家です。以下のYouTube動画の字幕からレシピ情報を抽出してJSONで出力してください。
-      
-      【重要：表記の統一】
-      - 食材名は、一般的な表記に統一してください。
-        例:「たまご」→「卵」、「鶏肉」→「鶏もも肉」など、料理の文脈に合わせて最も一般的な漢字・名称に直してください。
-      - 字幕の誤字は推測して補正してください。
+      表記は一般的なものに統一し、誤字は補正してください。
 
       出力フォーマット(JSON):
       {
         "title": "${info.basic_info.title || '料理名'}",
+        "channel_name": "${channelName}", 
         "ingredients": ["材料1 分量", "材料2 分量"],
         "steps": ["手順1", "手順2"]
       }
