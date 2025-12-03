@@ -1,7 +1,11 @@
-// app/api/youtube/route.ts
 import { NextResponse } from 'next/server';
-import { YoutubeTranscript } from 'youtube-transcript';
+import { Innertube, UniversalCache } from 'youtubei.js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+
+// APIキーの確認
+if (!process.env.GEMINI_API_KEY) {
+  console.error("エラー: GEMINI_API_KEY が設定されていません");
+}
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
@@ -10,76 +14,63 @@ export async function POST(req: Request) {
     const { url } = await req.json();
     console.log("分析開始 URL:", url);
 
-    // 動画ID抽出 (短縮URL youtu.be にも対応)
+    // 1. 動画IDの抽出
     let videoId = '';
-    if (url.includes('youtu.be/')) {
-      videoId = url.split('youtu.be/')[1]?.split('?')[0];
-    } else {
-      videoId = url.split('v=')[1]?.split('&')[0];
-    }
-
-    if (!videoId) {
-      console.error("動画ID抽出失敗");
-      throw new Error('URLから動画IDが見つかりませんでした');
-    }
-    console.log("動画ID:", videoId);
-
-    // ★修正ポイント：3段階で字幕を探す
-    let transcriptItems = null;
-
-    // 作戦1: 日本語('ja')を指定して取る
     try {
-      console.log("作戦1: 日本語字幕を探します...");
-      transcriptItems = await YoutubeTranscript.fetchTranscript(videoId, { lang: 'ja' });
-    } catch (e) {
-      console.log("作戦1失敗。次は指定なしで探します。");
-    }
-
-    // 作戦2: 指定なし（デフォルト/自動生成）で取る
-    if (!transcriptItems) {
-      try {
-        transcriptItems = await YoutubeTranscript.fetchTranscript(videoId);
-      } catch (e) {
-        console.log("作戦2失敗。");
+      if (url.includes('youtu.be/')) {
+        videoId = url.split('youtu.be/')[1]?.split('?')[0];
+      } else if (url.includes('v=')) {
+        videoId = url.split('v=')[1]?.split('&')[0];
       }
+    } catch (e) { console.error("ID抽出エラー"); }
+
+    if (!videoId) throw new Error('動画IDが見つかりませんでした');
+
+    // 2. Innertube初期化
+    const yt = await Innertube.create({
+      cache: new UniversalCache(false),
+      generate_session_locally: true,
+    });
+
+    // 3. 動画情報・字幕取得
+    console.log("字幕取得中...");
+    const info = await yt.getInfo(videoId);
+    const transcriptData = await info.getTranscript();
+
+    if (!transcriptData || !transcriptData.transcript) {
+      throw new Error('字幕がありません');
     }
 
-    // 作戦3: 英語('en')でもいいから取る
-    if (!transcriptItems) {
-      try {
-        console.log("作戦3: 英語字幕を探します...");
-        transcriptItems = await YoutubeTranscript.fetchTranscript(videoId, { lang: 'en' });
-      } catch (e) {
-        console.log("作戦3失敗。");
-      }
+    // 4. テキスト結合 (ここを安全な書き方に修正済み)
+    // データ構造が深いため、any型を使って安全に取り出します
+    const data: any = transcriptData;
+    const segments = data?.transcript?.content?.body?.initial_segments;
+
+    if (!segments) {
+      throw new Error('字幕データの構造が予期しない形式です');
     }
 
-    // 全部ダメだった場合
-    if (!transcriptItems || transcriptItems.length === 0) {
-      console.error("字幕取得 完全失敗");
-      throw new Error('字幕が見つかりませんでした。');
-    }
+    const fullText = segments.map((segment: any) => {
+      return segment.snippet.text;
+    }).join(' ');
+    
+    console.log("字幕取得成功 文字数:", fullText.length);
 
-    console.log("字幕取得成功！文字数:", transcriptItems.length);
-
-    // 文字列結合
-    const fullText = transcriptItems.map(item => item.text).join(' ');
-
-    // Gemini AI分析
+    // 5. Gemini AI分析
+    // gemini-1.5-flash を使用 (これが現在の推奨です)
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    
     const prompt = `
-      あなたはプロの料理家です。以下のYouTube動画の字幕から、レシピ情報を抽出してJSON形式で出力してください。
-      字幕には誤字が含まれる可能性があるため、文脈から正しい食材や手順を推測して補正してください。
+      あなたはプロの料理家です。以下のYouTube動画の字幕からレシピ情報を抽出してJSONで出力してください。
       
       出力フォーマット(JSON):
       {
-        "title": "料理名",
+        "title": "${info.basic_info.title || '料理名'}",
         "ingredients": ["材料1 分量", "材料2 分量"],
-        "steps": ["手順1", "手順2", "手順3"]
+        "steps": ["手順1", "手順2"]
       }
 
-      字幕テキスト:
-      ${fullText.slice(0, 20000)}
+      字幕: ${fullText.slice(0, 30000)}
     `;
 
     const result = await model.generateContent(prompt);
@@ -87,19 +78,16 @@ export async function POST(req: Request) {
     const text = response.text();
     
     const jsonStr = text.match(/\{[\s\S]*\}/)?.[0] || "{}";
-    const data = JSON.parse(jsonStr);
+    const resultData = JSON.parse(jsonStr);
 
-    return NextResponse.json(data);
+    return NextResponse.json(resultData);
 
   } catch (error: any) {
-    // VS Codeのターミナルに詳細なエラーを表示
-    console.error("================ エラー発生 ================");
-    console.error(error);
-    console.error("===========================================");
+    console.error("エラー詳細:", error);
     
-    return NextResponse.json(
-      { error: `エラー: ${error.message || '不明なエラー'}` }, 
-      { status: 500 }
-    );
+    let msg = error.message || '不明なエラー';
+    if (msg.includes('404')) msg = 'AIモデルへのアクセスに失敗しました(404)。APIキーを確認してください。';
+    
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
