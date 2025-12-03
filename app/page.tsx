@@ -7,16 +7,17 @@ import StockList from './components/StockList';
 import MoneyList from './components/MoneyList';
 import YouTubeAnalyze from './components/YouTubeAnalyze';
 import RecipeBook from './components/RecipeBook';
-import CookingGlossary from './components/CookingGlossary'; // ★追加
+import CookingGlossary from './components/CookingGlossary';
+import WeeklyCalendar from './components/WeeklyCalendar'; // ★追加
 import Auth from './components/Auth';
 
-// ★ glossary を追加
-type ViewType = 'food' | 'seasoning' | 'other' | 'menu' | 'money' | 'youtube' | 'recipebook' | 'glossary';
+// ★ calendar を追加
+type ViewType = 'food' | 'seasoning' | 'other' | 'menu' | 'money' | 'youtube' | 'recipebook' | 'glossary' | 'calendar';
 
 export default function Home() {
   const [session, setSession] = useState<any>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [currentView, setCurrentView] = useState<ViewType>('food');
+  const [currentView, setCurrentView] = useState<ViewType>('calendar'); // 初期画面をカレンダーに
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -39,7 +40,8 @@ export default function Home() {
       case 'money': return '💰 資産管理';
       case 'youtube': return '📺 動画レシピ分析';
       case 'recipebook': return '📖 保存レシピ帳';
-      case 'glossary': return '📚 料理用語じてん'; // ★追加
+      case 'glossary': return '📚 料理用語じてん';
+      case 'calendar': return '📅 献立カレンダー'; // ★追加
       default: return 'Super House App';
     }
   };
@@ -71,7 +73,8 @@ export default function Home() {
             {currentView === 'money' ? <MoneyList /> : 
              currentView === 'youtube' ? <YouTubeAnalyze /> : 
              currentView === 'recipebook' ? <RecipeBook /> : 
-             currentView === 'glossary' ? <CookingGlossary /> : // ★追加
+             currentView === 'glossary' ? <CookingGlossary /> : 
+             currentView === 'calendar' ? <WeeklyCalendar /> : // ★追加
              <StockList view={currentView as any} />}
           </div>
         </div>

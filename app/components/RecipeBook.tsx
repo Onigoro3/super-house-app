@@ -17,7 +17,11 @@ const SYNONYM_MAP: Record<string, string[]> = {
   "出汁": ["だし", "ダシ", "ほんだし"], "中華だし": ["鶏ガラスープ", "ウェイパー", "創味シャンタン"],
 };
 
-type Recipe = { id: number; title: string; channel_name: string; url: string; ingredients: string[]; steps: string[]; };
+type Recipe = { 
+  id: number; title: string; channel_name: string; url: string; 
+  ingredients: string[]; steps: string[]; 
+  rating: number; is_favorite: boolean; memo: string; // ★追加
+};
 type StockItem = { id: number; name: string; quantity: string; status: 'ok' | 'buy'; category: string; };
 
 export default function RecipeBook() {
@@ -36,6 +40,10 @@ export default function RecipeBook() {
   const [movingRecipeId, setMovingRecipeId] = useState<number | null>(null);
   const [newFolderText, setNewFolderText] = useState('');
 
+  // ★カレンダー登録用
+  const [calendarTargetId, setCalendarTargetId] = useState<number | null>(null);
+  const [calendarDate, setCalendarDate] = useState('');
+
   const fetchData = async () => {
     const { data: r } = await supabase.from('recipes').select('*').order('created_at', { ascending: false });
     const { data: s } = await supabase.from('items').select('*');
@@ -47,6 +55,8 @@ export default function RecipeBook() {
     fetchData();
     const saved = localStorage.getItem('recipe_checks');
     if (saved) setCheckedItems(JSON.parse(saved));
+    // カレンダー日付の初期値を今日に
+    setCalendarDate(new Date().toISOString().split('T')[0]);
   }, []);
 
   const channels = Array.from(new Set(recipes.map(r => r.channel_name || 'その他')));
@@ -57,6 +67,7 @@ export default function RecipeBook() {
     return acc;
   }, {} as Record<string, Recipe[]>);
 
+  // --- 操作ロジック ---
   const startEditFolder = (channel: string) => { setEditingFolder(channel); setEditFolderText(channel); };
   const saveFolder = async (oldName: string) => {
     if (!editFolderText.trim()) return;
@@ -76,6 +87,52 @@ export default function RecipeBook() {
   const toggleCheck = (rid: number, idx: number) => { const next = { ...checkedItems, [rid]: { ...checkedItems[rid], [idx]: !checkedItems[rid]?.[idx] } }; setCheckedItems(next); localStorage.setItem('recipe_checks', JSON.stringify(next)); };
   const toggleFolder = (channel: string) => setOpenFolders(prev => ({ ...prev, [channel]: !prev[channel] }));
 
+  // ★お気に入り切り替え
+  const toggleFavorite = async (id: number, current: boolean, e: React.MouseEvent) => {
+    e.stopPropagation();
+    await supabase.from('recipes').update({ is_favorite: !current }).eq('id', id);
+    setRecipes(recipes.map(r => r.id === id ? { ...r, is_favorite: !current } : r));
+  };
+
+  // ★評価（星）更新
+  const updateRating = async (id: number, rating: number) => {
+    await supabase.from('recipes').update({ rating }).eq('id', id);
+    setRecipes(recipes.map(r => r.id === id ? { ...r, rating } : r));
+  };
+
+  // ★LINE共有機能
+  const shareToLine = (recipe: Recipe, toBuyList: any[]) => {
+    if (toBuyList.length === 0) return alert('買い物リストが空です');
+    
+    const text = `🛒 買い物リスト (${recipe.title})\n\n` + 
+                 toBuyList.map(item => `・${item.text}`).join('\n');
+    
+    navigator.clipboard.writeText(text).then(() => {
+      if (confirm('買い物リストをコピーしました！\nLINEを開きますか？')) {
+        window.open('https://line.me/R/', '_blank');
+      }
+    });
+  };
+
+  // ★カレンダー登録
+  const addToCalendar = async () => {
+    if (!calendarTargetId || !calendarDate) return;
+    const recipe = recipes.find(r => r.id === calendarTargetId);
+    if (!recipe) return;
+
+    const { error } = await supabase.from('meal_plans').insert([{
+      date: calendarDate,
+      recipe_id: recipe.id,
+      recipe_title: recipe.title
+    }]);
+
+    if (error) alert('登録に失敗しました');
+    else alert(`${calendarDate} の献立に登録しました！`);
+    
+    setCalendarTargetId(null);
+  };
+
+  // 在庫照合
   const findStockMatch = (ingredientText: string) => {
     const normalize = (str: string) => str.replace(/\(.*\)/g, '').replace(/（.*）/g, '').replace(/[\u30a1-\u30f6]/g, m => String.fromCharCode(m.charCodeAt(0) - 0x60)).replace(/\s+/g, '');
     const target = normalize(ingredientText);
@@ -97,7 +154,7 @@ export default function RecipeBook() {
     });
   };
 
-  // 買い物完了（在庫追加）
+  // 買い物完了
   const completeShopping = async (recipe: Recipe) => { 
     const checks = checkedItems[recipe.id] || {}; const indices = Object.keys(checks).filter(k => checks[Number(k)]).map(Number);
     if (indices.length === 0) return alert("購入したものにチェックを！"); if (!confirm(`${indices.length}個を在庫に追加しますか？`)) return;
@@ -115,24 +172,19 @@ export default function RecipeBook() {
     } catch (e) { alert("エラー"); } finally { setIsProcessing(false); }
   };
 
-  // ★調理完了＆在庫引き算（調味料除外）
+  // 在庫引き算
   const handleCooked = async (recipe: Recipe) => {
     if (!confirm(`「${recipe.title}」を作りましたか？\n在庫から材料（調味料以外）を減らします。`)) return;
     let updatedCount = 0;
-    
     for (const ingredientStr of recipe.ingredients) {
       const matchRecipe = ingredientStr.match(/^(.+?)\s*([0-9０-９\.]+)(.*)$/);
       if (!matchRecipe) continue;
       const recipeName = matchRecipe[1].trim(); 
       const recipeNum = parseFloat(matchRecipe[2]); 
       const unit = matchRecipe[3].trim(); 
-      
       const stockItem = stockItems.find(i => i.status === 'ok' && (i.name.includes(recipeName) || recipeName.includes(i.name)));
-      
       if (stockItem) {
-        // 調味料は減らさない
         if (stockItem.category === 'seasoning') continue;
-
         if (stockItem.quantity) {
           const matchStock = stockItem.quantity.match(/^([0-9０-９\.]+)(.*)$/);
           if (matchStock) {
@@ -152,7 +204,7 @@ export default function RecipeBook() {
   };
 
   return (
-    <div className="p-4 space-y-8 pb-24">
+    <div className="p-4 space-y-8 pb-24 relative">
       <div className="bg-indigo-50 p-6 rounded-xl border-2 border-indigo-100 text-center">
         <h2 className="text-2xl font-bold text-indigo-800">📖 マイ・レシピ帳</h2>
         <p className="text-sm text-gray-500">フォルダ編集・レシピ移動・全材料表示に対応</p>
@@ -195,6 +247,15 @@ export default function RecipeBook() {
                     <div key={recipe.id} className={`border rounded-xl transition-all duration-300 ${isOpen ? 'col-span-1 md:col-span-2 lg:col-span-3 shadow-lg ring-2 ring-indigo-100' : 'hover:shadow-md'}`}>
                       <div className="p-4 border-b flex justify-between items-start bg-white rounded-t-xl">
                         <div className="flex-1 mr-2">
+                          <div className="flex items-center gap-2 mb-1">
+                            {/* ★お気に入りボタン */}
+                            <button onClick={(e) => toggleFavorite(recipe.id, recipe.is_favorite, e)} className={`text-xl ${recipe.is_favorite ? 'text-pink-500' : 'text-gray-300 hover:text-pink-300'}`}>
+                              {recipe.is_favorite ? '♥' : '♡'}
+                            </button>
+                            {/* ★評価スター表示 */}
+                            <span className="text-yellow-400 text-sm">{'★'.repeat(recipe.rating)}{'☆'.repeat(5 - recipe.rating)}</span>
+                          </div>
+
                           {editingTitleId === recipe.id ? (
                             <div className="flex gap-2">
                               <input value={editTitleText} onChange={e => setEditTitleText(e.target.value)} className="border p-1 w-full text-black" autoFocus />
@@ -208,7 +269,7 @@ export default function RecipeBook() {
                           )}
                         </div>
                         <div className="relative">
-                          <button onClick={() => setMovingRecipeId(movingRecipeId === recipe.id ? null : recipe.id)} className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded hover:bg-gray-200">📂 移動</button>
+                          <button onClick={() => setMovingRecipeId(movingRecipeId === recipe.id ? null : recipe.id)} className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded hover:bg-gray-200">📂</button>
                           {movingRecipeId === recipe.id && (
                             <div className="absolute right-0 top-8 bg-white border shadow-xl rounded-lg p-2 z-10 w-48">
                               <p className="text-xs text-gray-400 mb-1">移動先フォルダ:</p>
@@ -225,11 +286,24 @@ export default function RecipeBook() {
 
                       {isOpen && (
                         <div className="p-4 bg-gray-50 text-sm">
+                          {/* ★カレンダー登録ボタン */}
+                          <button onClick={() => setCalendarTargetId(recipe.id)} className="w-full bg-indigo-50 text-indigo-600 border border-indigo-200 py-2 rounded-lg font-bold hover:bg-indigo-100 mb-4 flex items-center justify-center gap-2">
+                            📅 カレンダーに登録
+                          </button>
+
                           <div className="flex gap-2 mb-4">
                             <a href={recipe.url} target="_blank" className="flex-1 bg-red-600 text-white text-center py-2 rounded font-bold hover:bg-red-700">📺 動画</a>
                             <button onClick={() => deleteRecipe(recipe.id)} className="px-3 bg-gray-200 rounded font-bold">🗑️</button>
                           </div>
                           
+                          {/* ★評価スター編集 */}
+                          <div className="mb-4 bg-white p-2 rounded border flex items-center gap-2">
+                            <span className="text-xs font-bold text-gray-500">評価:</span>
+                            {[1, 2, 3, 4, 5].map(star => (
+                              <button key={star} onClick={() => updateRating(recipe.id, star)} className={`text-lg ${star <= recipe.rating ? 'text-yellow-400' : 'text-gray-200'}`}>★</button>
+                            ))}
+                          </div>
+
                           <div className="grid md:grid-cols-2 gap-6">
                             <div>
                               <div className="mb-4 bg-white p-3 rounded border border-gray-300">
@@ -238,7 +312,11 @@ export default function RecipeBook() {
                               </div>
 
                               <div className="bg-white p-3 rounded border border-green-200 mb-4">
-                                <h5 className="font-bold text-green-700 mb-2 flex items-center gap-2">🛒 買い物リスト <span className="text-xs font-normal text-gray-400">(在庫なし)</span></h5>
+                                <div className="flex justify-between items-center mb-2">
+                                  <h5 className="font-bold text-green-700 flex items-center gap-2">🛒 買い物リスト <span className="text-xs font-normal text-gray-400">(在庫なし)</span></h5>
+                                  {/* ★LINEボタン */}
+                                  <button onClick={() => shareToLine(recipe, toBuy)} className="text-xs bg-green-500 text-white px-2 py-1 rounded hover:bg-green-600">LINEで送る</button>
+                                </div>
                                 {toBuy.length === 0 ? <p className="text-xs text-gray-400">すべて在庫にあります！</p> : toBuy.map((item) => (
                                   <label key={item.index} className={`flex gap-2 p-1 cursor-pointer hover:bg-green-50 rounded ${checkedItems[recipe.id]?.[item.index] ? 'opacity-50 line-through' : ''}`}>
                                     <input type="checkbox" checked={!!checkedItems[recipe.id]?.[item.index]} onChange={() => toggleCheck(recipe.id, item.index)} className="accent-green-600" />
@@ -269,15 +347,7 @@ export default function RecipeBook() {
                               <ol className="list-decimal pl-5 space-y-2 text-gray-700">{recipe.steps.map((s, i) => <li key={i} className="leading-relaxed">{s}</li>)}</ol>
                             </div>
                           </div>
-
-                          {/* ★作ったボタン（レシピ帳にも追加） */}
-                          <button 
-                            onClick={() => handleCooked(recipe)}
-                            className="w-full mt-4 bg-green-500 text-white py-3 rounded-lg font-bold shadow hover:bg-green-600 transition flex items-center justify-center gap-2"
-                          >
-                            😋 美味しくできた！ <span className="text-xs font-normal">(在庫から減らす / 調味料除く)</span>
-                          </button>
-
+                          <button onClick={() => handleCooked(recipe)} className="w-full mt-4 bg-green-500 text-white py-3 rounded-lg font-bold shadow hover:bg-green-600 transition flex items-center justify-center gap-2">😋 美味しくできた！ <span className="text-xs font-normal">(在庫から減らす / 調味料除く)</span></button>
                         </div>
                       )}
                     </div>
@@ -288,6 +358,26 @@ export default function RecipeBook() {
           </div>
         ))}
       </div>
+
+      {/* ★カレンダー登録モーダル */}
+      {calendarTargetId && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white p-6 rounded-xl shadow-xl w-full max-w-sm">
+            <h3 className="text-lg font-bold mb-4">📅 カレンダーに登録</h3>
+            <p className="text-sm text-gray-600 mb-2">いつの献立にしますか？</p>
+            <input 
+              type="date" 
+              value={calendarDate} 
+              onChange={e => setCalendarDate(e.target.value)} 
+              className="w-full border p-3 rounded-lg mb-6 text-black" 
+            />
+            <div className="flex gap-3">
+              <button onClick={() => setCalendarTargetId(null)} className="flex-1 bg-gray-200 text-gray-800 py-2 rounded-lg">キャンセル</button>
+              <button onClick={addToCalendar} className="flex-1 bg-indigo-600 text-white py-2 rounded-lg font-bold">登録する</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
