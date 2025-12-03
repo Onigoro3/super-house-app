@@ -1,3 +1,4 @@
+// app/api/youtube/route.ts
 import { NextResponse } from 'next/server';
 import { Innertube, UniversalCache } from 'youtubei.js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -41,7 +42,7 @@ export async function POST(req: Request) {
       throw new Error('字幕がありません');
     }
 
-    // 4. テキスト結合 (ここを安全な書き方に修正済み)
+    // 4. テキスト結合
     // データ構造が深いため、any型を使って安全に取り出します
     const data: any = transcriptData;
     const segments = data?.transcript?.content?.body?.initial_segments;
@@ -57,8 +58,9 @@ export async function POST(req: Request) {
     console.log("字幕取得成功 文字数:", fullText.length);
 
     // 5. Gemini AI分析
-    // gemini-1.5-flash を使用 (これが現在の推奨です)
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    // ★修正ポイント: モデル名を最新の 'gemini-2.5-flash' に変更
+    // (これがダメな場合は 'gemini-flash-latest' も試せます)
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
     
     const prompt = `
       あなたはプロの料理家です。以下のYouTube動画の字幕からレシピ情報を抽出してJSONで出力してください。
@@ -86,7 +88,7 @@ export async function POST(req: Request) {
     console.error("エラー詳細:", error);
     
     let msg = error.message || '不明なエラー';
-    if (msg.includes('404')) msg = 'AIモデルへのアクセスに失敗しました(404)。APIキーを確認してください。';
+    if (msg.includes('404')) msg = 'AIモデルが古いか無効です(404)。モデル名を変更する必要があります。';
     
     return NextResponse.json({ error: msg }, { status: 500 });
   }
