@@ -1,6 +1,6 @@
 // app/pdf/PDFViewer.tsx
 'use client';
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect, Dispatch, SetStateAction } from 'react'; // ★追加
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
@@ -24,13 +24,14 @@ type Props = {
   file: File | null;
   zoom: number;
   tool: string | null;
-  setTool: (tool: string | null) => void; // ツール解除用
+  setTool: (tool: string | null) => void;
   pageNumber: number;
   currentColor: string;
   currentSize: number;
   onLoadSuccess: (data: { numPages: number }) => void;
   annotations: Annotation[];
-  setAnnotations: (annots: Annotation[]) => void;
+  // ★修正: 関数形式の更新も受け取れる正しい型に変更
+  setAnnotations: Dispatch<SetStateAction<Annotation[]>>;
   selectedId: number | null;
   setSelectedId: (id: number | null) => void;
 };
@@ -43,7 +44,6 @@ export default function PDFViewer({
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   
-  // ドラッグ・リサイズ状態管理
   const [dragState, setDragState] = useState<{
     mode: 'move' | 'resize' | null;
     startX: number;
@@ -52,17 +52,13 @@ export default function PDFViewer({
     startTop: number;
     startWidth: number;
     startHeight: number;
-    handle?: string; // 'se', 'sw' etc.
+    handle?: string;
   }>({ mode: null, startX:0, startY:0, startLeft:0, startTop:0, startWidth:0, startHeight:0 });
 
-  // 背景クリック（アイテム追加）
   const handlePageClick = (e: React.MouseEvent) => {
-    // ドラッグ中やリサイズ中は無視
     if (dragState.mode) return;
 
-    // ツール未選択なら選択解除して終了
     if (!tool) {
-      // アイテム上でのクリックでなければ選択解除
       if (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('react-pdf__Page')) {
         setSelectedId(null);
       }
@@ -91,15 +87,12 @@ export default function PDFViewer({
 
     setAnnotations([...annotations, newAnnot]);
     setSelectedId(newAnnot.id);
-    
-    // ★重要: 配置したらツールを自動解除
     setTool(null);
   };
 
-  // マウスダウン（ドラッグ開始）
   const handleMouseDown = (e: React.MouseEvent, id: number, mode: 'move' | 'resize', handle?: string) => {
     e.stopPropagation();
-    if (tool) return; // ツール使用中は操作しない
+    if (tool) return;
 
     setSelectedId(id);
     const annot = annotations.find(a => a.id === id);
@@ -117,7 +110,6 @@ export default function PDFViewer({
     });
   };
 
-  // マウス移動（ドラッグ中）
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!dragState.mode || !selectedId) return;
@@ -129,23 +121,16 @@ export default function PDFViewer({
       setAnnotations(prev => prev.map(a => {
         if (a.id !== selectedId) return a;
 
-        // --- 移動モード ---
         if (dragState.mode === 'move') {
           return { ...a, x: dragState.startLeft + deltaX, y: dragState.startTop + deltaY };
         }
         
-        // --- リサイズモード ---
         else if (dragState.mode === 'resize') {
           let newW = dragState.startWidth;
           let newH = dragState.startHeight;
-          let newX = dragState.startLeft;
-          let newY = dragState.startTop;
 
-          // ハンドルごとの挙動
           if (dragState.handle?.includes('e')) newW = Math.max(10, dragState.startWidth + deltaX);
           if (dragState.handle?.includes('s')) newH = Math.max(10, dragState.startHeight + deltaY);
-          
-          // 左や上へのリサイズは位置も変わる（簡易実装として右下のみ対応でも十分ですが、今回は右下リサイズのみ実装して安定させます）
           
           return { ...a, width: newW, height: newH };
         }
@@ -167,7 +152,6 @@ export default function PDFViewer({
     };
   }, [dragState, selectedId, zoom, setAnnotations]);
 
-  // アイテム削除
   const removeAnnotation = (e: React.MouseEvent, id: number) => {
     e.preventDefault();
     if(!confirm("削除しますか？")) return;
@@ -175,7 +159,6 @@ export default function PDFViewer({
     if (selectedId === id) setSelectedId(null);
   };
 
-  // テキスト更新
   const updateText = (id: number, text: string) => {
     setAnnotations(annotations.map(a => a.id === id ? { ...a, content: text } : a));
   };
@@ -220,14 +203,12 @@ export default function PDFViewer({
                   top: annot.y * scale,
                   width: w,
                   height: h,
-                  transform: annot.type === 'line' ? 'none' : 'translate(-50%, -50%)', // 線以外は中心基準で配置していたが、リサイズしやすくするため左上基準に変更してもよいが、既存互換性のため維持
-                  // 選択枠
+                  transform: annot.type === 'line' ? 'none' : 'translate(-50%, -50%)',
                   border: isSelected ? '1px dashed #3B82F6' : 'none',
                   cursor: tool ? 'crosshair' : 'move',
                   zIndex: isSelected ? 100 : 10
                 }}
               >
-                {/* --- コンテンツ描画 --- */}
                 <div className="w-full h-full relative flex items-center justify-center">
                   
                   {annot.type === 'text' && (
@@ -278,16 +259,12 @@ export default function PDFViewer({
                   )}
                 </div>
 
-                {/* --- リサイズハンドル（選択時のみ表示） --- */}
                 {isSelected && !tool && (
-                  <>
-                    {/* 右下ハンドル */}
-                    <div
-                      onMouseDown={(e) => handleMouseDown(e, annot.id, 'resize', 'se')}
-                      className="absolute bottom-0 right-0 w-4 h-4 bg-blue-500 border border-white cursor-se-resize"
-                      style={{ transform: 'translate(50%, 50%)' }}
-                    />
-                  </>
+                  <div
+                    onMouseDown={(e) => handleMouseDown(e, annot.id, 'resize', 'se')}
+                    className="absolute bottom-0 right-0 w-4 h-4 bg-blue-500 border border-white cursor-se-resize"
+                    style={{ transform: 'translate(50%, 50%)' }}
+                  />
                 )}
               </div>
             );
