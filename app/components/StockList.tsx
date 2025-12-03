@@ -15,24 +15,31 @@ type Item = {
   status: Status;
 };
 
-type Recipe = {
+// 料理単体の型
+type Dish = {
   title: string;
-  type: string;
-  difficulty: '簡単' | '普通' | '難しい';
-  calories: number;
+  type: string; // 主菜、副菜など
+  difficulty: string;
   ingredients: string[];
   steps: string[];
+};
+
+// 献立セットの型（新構造）
+type MenuSet = {
+  menu_title: string;
+  nutrition_point: string; // 栄養アドバイス
+  total_calories: number;
+  dishes: Dish[];
 };
 
 export default function StockList({ view }: { view: ViewType }) {
   const [items, setItems] = useState<Item[]>([]);
   
-  // ★変更：入力用ステートを「数値」と「単位」に分離
+  // 入力用
   const [newItemName, setNewItemName] = useState('');
   const [newItemCount, setNewItemCount] = useState('');
-  const [newItemUnit, setNewItemUnit] = useState('個'); // デフォルト単位
+  const [newItemUnit, setNewItemUnit] = useState('個');
 
-  // 編集用
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState('');
   const [editQuantity, setEditQuantity] = useState('');
@@ -40,9 +47,12 @@ export default function StockList({ view }: { view: ViewType }) {
   // 献立用
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [useQuantities, setUseQuantities] = useState<Record<number, string>>({});
-  const [includeRice, setIncludeRice] = useState(false);
-  const [recipes, setRecipes] = useState<Recipe[]>([]);
-  const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+  const [includeRice, setIncludeRice] = useState(true);
+  // ★追加：品数選択（デフォルト1品）
+  const [dishCount, setDishCount] = useState(1);
+  
+  const [menuSets, setMenuSets] = useState<MenuSet[]>([]);
+  const [expandedIndex, setExpandedIndex] = useState<number | null>(null); // どのセットを開いているか
   const [loading, setLoading] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
@@ -53,29 +63,14 @@ export default function StockList({ view }: { view: ViewType }) {
   };
   useEffect(() => { fetchItems(); }, []);
 
-  // ★変更：アイテム追加（数値と単位を合体させて保存）
+  // 追加・編集・削除・画像解析（既存のまま）
   const addItem = async () => {
     if (!newItemName) return;
-    
-    // "2" + "個" = "2個" のように結合。数値が空なら空文字。
     const combinedQuantity = newItemCount ? `${newItemCount}${newItemUnit}` : '';
     const category: Category = view === 'menu' ? 'food' : (view as Category);
-    
-    const { error } = await supabase.from('items').insert([{ 
-      name: newItemName, 
-      quantity: combinedQuantity, 
-      category, 
-      status: 'ok' 
-    }]);
-    
-    if (!error) { 
-      setNewItemName(''); 
-      setNewItemCount(''); // リセット
-      // 単位はリセットせずそのまま（連続入力しやすくするため）
-      fetchItems(); 
-    }
+    const { error } = await supabase.from('items').insert([{ name: newItemName, quantity: combinedQuantity, category, status: 'ok' }]);
+    if (!error) { setNewItemName(''); setNewItemCount(''); fetchItems(); }
   };
-
   const startEditing = (item: Item) => { setEditingId(item.id); setEditName(item.name); setEditQuantity(item.quantity || ''); };
   const saveEdit = async () => {
     if (editingId === null) return;
@@ -93,24 +88,8 @@ export default function StockList({ view }: { view: ViewType }) {
     setSelectedIds(selectedIds.filter(sid => sid !== id));
     await supabase.from('items').delete().eq('id', id);
   };
-
-  const toggleSelection = (id: number) => {
-    if (selectedIds.includes(id)) {
-      setSelectedIds(selectedIds.filter(sid => sid !== id));
-      const newQuantities = { ...useQuantities }; delete newQuantities[id]; setUseQuantities(newQuantities);
-    } else {
-      setSelectedIds([...selectedIds, id]);
-    }
-  };
-  const handleQuantityChange = (id: number, val: string) => {
-    setUseQuantities({ ...useQuantities, [id]: val });
-    if (!selectedIds.includes(id) && val !== '') setSelectedIds([...selectedIds, id]);
-  };
-
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setIsAnalyzing(true);
+    const file = e.target.files?.[0]; if (!file) return; setIsAnalyzing(true);
     const reader = new FileReader();
     reader.onloadend = async () => {
       const base64 = reader.result as string;
@@ -118,42 +97,64 @@ export default function StockList({ view }: { view: ViewType }) {
         const res = await fetch('/api/receipt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ imageBase64: base64 }) });
         if (!res.ok) throw new Error('分析失敗');
         const itemsData: any[] = await res.json();
-        if (itemsData.length === 0) { alert('食材が見つかりませんでした。'); return; }
-        for (const item of itemsData) {
-           await supabase.from('items').insert([{ name: item.name, quantity: item.quantity || '', category: item.category || 'food', status: 'ok' }]);
-        }
-        alert(`${itemsData.length}個のアイテムを在庫に追加しました！`); fetchItems();
-      } catch (err) { alert('画像の解析に失敗しました。'); } finally { setIsAnalyzing(false); e.target.value = ''; }
+        for (const item of itemsData) { await supabase.from('items').insert([{ name: item.name, quantity: item.quantity || '', category: item.category || 'food', status: 'ok' }]); }
+        alert(`${itemsData.length}個追加しました！`); fetchItems();
+      } catch (err) { alert('解析失敗'); } finally { setIsAnalyzing(false); e.target.value = ''; }
     };
     reader.readAsDataURL(file);
   };
 
+  const toggleSelection = (id: number) => {
+    if (selectedIds.includes(id)) {
+      setSelectedIds(selectedIds.filter(sid => sid !== id));
+      const newQuantities = { ...useQuantities }; delete newQuantities[id]; setUseQuantities(newQuantities);
+    } else { setSelectedIds([...selectedIds, id]); }
+  };
+  const handleQuantityChange = (id: number, val: string) => {
+    setUseQuantities({ ...useQuantities, [id]: val });
+    if (!selectedIds.includes(id) && val !== '') setSelectedIds([...selectedIds, id]);
+  };
+
+  // ★ AI献立生成ロジック（更新版）
   const generateMenu = async () => {
     const selectedFoods = items.filter(i => selectedIds.includes(i.id) && i.category === 'food');
     if (selectedFoods.length === 0) { alert("食材を選んでください！"); return; }
-    setLoading(true); setRecipes([]); setExpandedIndex(null);
+    setLoading(true); setMenuSets([]); setExpandedIndex(null);
+
     const ingredientsToSend = selectedFoods.map(f => {
       const qty = useQuantities[f.id] || f.quantity || '';
       return qty ? `${f.name}(${qty})` : f.name;
     });
     const availableSeasonings = items.filter(i => i.category === 'seasoning' && i.status === 'ok').map(i => i.name).join('、');
+
     try {
-      const res = await fetch('/api/menu', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ingredients: ingredientsToSend, seasoning: availableSeasonings || '基本調味料', includeRice }), });
+      const res = await fetch('/api/menu', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          ingredients: ingredientsToSend, 
+          seasoning: availableSeasonings || '基本調味料', 
+          includeRice,
+          dishCount // ★品数を送る
+        }),
+      });
       if (!res.ok) throw new Error('Error');
       const data = await res.json();
-      setRecipes(data);
+      setMenuSets(data); // セットリストを保存
     } catch (e) { alert('生成エラー'); } finally { setLoading(false); }
   };
 
+  // ★★★ 献立・レシピ画面 ★★★
   if (view === 'menu') {
     const foodStock = items.filter(i => i.category === 'food' && i.status === 'ok');
     const selectedItemsList = items.filter(i => selectedIds.includes(i.id));
     return (
       <div className="p-4 space-y-8 pb-24">
         <div className="bg-white p-5 rounded-xl border shadow-sm">
+          {/* 選択中リスト */}
           {selectedIds.length > 0 && (
             <div className="mb-4 bg-indigo-50 p-3 rounded-lg border border-indigo-100">
-              <p className="text-xs font-bold text-indigo-600 mb-2">👇 現在選択中の食材 ({selectedIds.length})</p>
+              <p className="text-xs font-bold text-indigo-600 mb-2">👇 使う食材 ({selectedIds.length})</p>
               <div className="flex flex-wrap gap-2">
                 {selectedItemsList.map(item => (
                   <span key={item.id} className="bg-white text-indigo-700 px-3 py-1 rounded-full text-sm shadow-sm border border-indigo-200 flex items-center gap-1">
@@ -163,6 +164,7 @@ export default function StockList({ view }: { view: ViewType }) {
               </div>
             </div>
           )}
+
           <h3 className="font-bold text-gray-700 border-b pb-2 mb-3">① 食材を選ぶ</h3>
           <div className="max-h-60 overflow-y-auto space-y-2 mb-4">
             {foodStock.length === 0 ? <p className="text-sm text-gray-400">在庫なし</p> : foodStock.map(item => (
@@ -176,46 +178,105 @@ export default function StockList({ view }: { view: ViewType }) {
               </div>
             ))}
           </div>
-          <div className="mb-4 bg-orange-50 p-3 rounded-lg border border-orange-100">
-            <label className="flex items-center gap-3 cursor-pointer">
+
+          <div className="mb-4 space-y-3">
+            <label className="flex items-center gap-3 cursor-pointer bg-orange-50 p-3 rounded-lg border border-orange-100">
               <input type="checkbox" checked={includeRice} onChange={() => setIncludeRice(!includeRice)} className="w-5 h-5 accent-orange-500" />
               <span className="text-gray-800 font-bold">🍚 白ご飯も使いますか？</span>
             </label>
+
+            {/* ★品数選択スライダー */}
+            <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
+              <p className="text-sm font-bold text-blue-800 mb-2">🍽️ 作る品数: {dishCount}品</p>
+              <div className="flex gap-2">
+                {[1, 2, 3, 4].map(num => (
+                  <button
+                    key={num}
+                    onClick={() => setDishCount(num)}
+                    className={`flex-1 py-2 rounded-lg font-bold transition ${
+                      dishCount === num ? 'bg-blue-600 text-white shadow' : 'bg-white text-blue-600 border border-blue-200'
+                    }`}
+                  >
+                    {num}品
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-blue-500 mt-1 text-center">
+                {dishCount === 1 ? '手軽に1品！' : dishCount === 2 ? '主菜＋副菜' : '栄養バランス定食！'}
+              </p>
+            </div>
           </div>
+
           <button onClick={generateMenu} disabled={selectedIds.length === 0 || loading} className={`w-full py-3 rounded-lg font-bold text-white shadow ${loading ? 'bg-indigo-400' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
-            {loading ? 'AIが考案中...' : `✨ ${selectedIds.length}個の食材で10案考える！`}
+            {loading ? 'AIシェフが考案中...' : `✨ ${dishCount}品の献立を考える！`}
           </button>
         </div>
-        {recipes.length > 0 && (
-          <div className="space-y-4">
-            <h3 className="font-bold text-gray-700 px-2">② AIシェフの提案 (10選)</h3>
-            {recipes.map((recipe, index) => (
-              <div key={index} className="bg-white border rounded-xl shadow-sm overflow-hidden">
-                <button onClick={() => setExpandedIndex(expandedIndex === index ? null : index)} className="w-full text-left p-4 flex justify-between items-center hover:bg-gray-50">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-1">
-                      <span className="text-xs font-bold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">{recipe.type}</span>
-                      <span className={`text-xs font-bold ${recipe.difficulty === '簡単' ? 'text-green-600' : 'text-orange-500'}`}>{recipe.difficulty}</span>
-                      <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">{recipe.calories}kcal</span>
+
+        {/* 提案結果表示エリア */}
+        {menuSets.length > 0 && (
+          <div className="space-y-6">
+            <h3 className="font-bold text-gray-700 px-2">
+              ② AIシェフの提案 ({menuSets.length}パターン)
+            </h3>
+            
+            {menuSets.map((menu, index) => {
+              const isOpen = expandedIndex === index;
+              return (
+                <div key={index} className="bg-white border-2 border-indigo-50 rounded-xl shadow-sm overflow-hidden">
+                  {/* メニューの見出し */}
+                  <button onClick={() => setExpandedIndex(isOpen ? null : index)} className="w-full text-left p-4 hover:bg-indigo-50 transition">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h4 className="font-bold text-xl text-indigo-900 mb-1">{menu.menu_title}</h4>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded-full font-bold">
+                            計 {menu.total_calories}kcal
+                          </span>
+                          <span className="text-xs text-gray-500">{menu.dishes.length}品構成</span>
+                        </div>
+                      </div>
+                      <span className={`text-2xl text-indigo-300 transition ${isOpen ? 'rotate-180' : ''}`}>▼</span>
                     </div>
-                    <h4 className="font-bold text-lg text-gray-800">{recipe.title}</h4>
-                  </div>
-                  <span className={`text-2xl text-gray-400 transition ${expandedIndex === index ? 'rotate-180' : ''}`}>▼</span>
-                </button>
-                {expandedIndex === index && (
-                  <div className="p-5 border-t bg-gray-50 text-sm animate-fadeIn">
-                    <div className="mb-4">
-                      <h5 className="font-bold text-gray-700 mb-2 border-l-4 border-green-500 pl-2">🥬 材料</h5>
-                      <ul className="list-disc pl-5 text-gray-700">{recipe.ingredients.map((ing, i) => <li key={i}>{ing}</li>)}</ul>
+                    {/* 栄養アドバイス（常に表示） */}
+                    <p className="text-sm text-gray-600 mt-3 bg-gray-50 p-2 rounded border border-gray-100">
+                      💡 {menu.nutrition_point}
+                    </p>
+                  </button>
+
+                  {/* 料理ごとの詳細（展開時のみ） */}
+                  {isOpen && (
+                    <div className="p-4 bg-indigo-50 space-y-4 border-t">
+                      {menu.dishes.map((dish, i) => (
+                        <div key={i} className="bg-white p-4 rounded-xl border shadow-sm">
+                          <div className="flex justify-between items-center mb-3 pb-2 border-b">
+                            <h5 className="font-bold text-lg text-gray-800">
+                              <span className="text-sm text-white bg-indigo-500 px-2 py-0.5 rounded mr-2">{dish.type}</span>
+                              {dish.title}
+                            </h5>
+                            <span className="text-xs font-bold text-orange-500">{dish.difficulty}</span>
+                          </div>
+                          
+                          <div className="grid md:grid-cols-2 gap-4">
+                            <div>
+                              <p className="text-xs font-bold text-gray-500 mb-1">🥬 材料</p>
+                              <ul className="list-disc pl-4 text-sm text-gray-700">
+                                {dish.ingredients.map((ing, k) => <li key={k}>{ing}</li>)}
+                              </ul>
+                            </div>
+                            <div>
+                              <p className="text-xs font-bold text-gray-500 mb-1">🔥 作り方</p>
+                              <ol className="list-decimal pl-4 text-sm text-gray-700 space-y-1">
+                                {dish.steps.map((step, k) => <li key={k}>{step}</li>)}
+                              </ol>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                    <div>
-                      <h5 className="font-bold text-gray-700 mb-2 border-l-4 border-orange-500 pl-2">🔥 作り方</h5>
-                      <ol className="list-decimal pl-5 text-gray-700 space-y-2">{recipe.steps.map((step, i) => <li key={i}>{step}</li>)}</ol>
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))}
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -238,75 +299,16 @@ export default function StockList({ view }: { view: ViewType }) {
           <ul className="space-y-1">{shoppingList.map(i => <li key={i.id} className="flex justify-between text-sm bg-white px-2 py-1 rounded"><span>{i.name}</span><span className="text-gray-400">{i.quantity}</span></li>)}</ul>
         </div>
       )}
-      
-      {/* ★変更：入力フォーム（スマホ対応・2段組みレイアウト） */}
       <div className="bg-white p-4 rounded-xl border shadow-sm flex flex-col gap-3">
-        {/* 上段：品名 */}
-        <input 
-          value={newItemName} 
-          onChange={e => setNewItemName(e.target.value)} 
-          placeholder="品名を追加 (例: キャベツ)" 
-          className="w-full border p-3 rounded-lg text-black bg-gray-50 focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none" 
-        />
-        
-        {/* 下段：数量・単位・ボタン */}
+        <input value={newItemName} onChange={e => setNewItemName(e.target.value)} placeholder="品名を追加" className="w-full border p-3 rounded-lg text-black bg-gray-50 focus:bg-white" />
         <div className="flex gap-2 h-12">
-          {/* 数量入力 (小さめ) */}
-          <input 
-            type="number"
-            value={newItemCount} 
-            onChange={e => setNewItemCount(e.target.value)} 
-            placeholder="数" 
-            className="w-16 border p-2 rounded-lg text-black text-center bg-gray-50 focus:bg-white" 
-          />
-          
-          {/* 単位選択 (ドロップダウン) */}
-          <select 
-            value={newItemUnit} 
-            onChange={e => setNewItemUnit(e.target.value)}
-            className="w-20 border p-2 rounded-lg text-black bg-gray-50 focus:bg-white"
-          >
-            <option value="個">個</option>
-            <option value="g">g</option>
-            <option value="ml">ml</option>
-            <option value="本">本</option>
-            <option value="束">束</option>
-            <option value="袋">袋</option>
-            <option value="パック">パック</option>
-            <option value="枚">枚</option>
-            <option value="玉">玉</option>
-            <option value="缶">缶</option>
-            <option value="箱">箱</option>
-          </select>
-
-          {/* 追加ボタン (残りの幅を埋める) */}
-          <button 
-            onClick={addItem} 
-            className="flex-1 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 active:scale-95 transition"
-          >
-            ＋
-          </button>
-          
-          {/* カメラボタン (アイコンのみ) */}
-          <label className={`w-12 flex items-center justify-center bg-green-600 text-white rounded-lg font-bold cursor-pointer hover:bg-green-700 active:scale-95 transition ${isAnalyzing ? 'opacity-50' : ''}`}>
-            <span>{isAnalyzing ? '...' : '📷'}</span>
-            <input 
-              type="file" 
-              accept="image/*" 
-              capture="environment" 
-              onChange={handleImageUpload} 
-              className="hidden" 
-              disabled={isAnalyzing}
-            />
-          </label>
+          <input type="number" value={newItemCount} onChange={e => setNewItemCount(e.target.value)} placeholder="数" className="w-16 border p-2 rounded-lg text-black text-center bg-gray-50" />
+          <select value={newItemUnit} onChange={e => setNewItemUnit(e.target.value)} className="w-20 border p-2 rounded-lg text-black bg-gray-50"><option value="個">個</option><option value="g">g</option><option value="ml">ml</option><option value="本">本</option><option value="束">束</option><option value="袋">袋</option><option value="パック">パック</option><option value="枚">枚</option><option value="玉">玉</option></select>
+          <button onClick={addItem} className="flex-1 bg-blue-600 text-white rounded-lg font-bold">＋</button>
+          <label className={`w-12 flex items-center justify-center bg-green-600 text-white rounded-lg font-bold cursor-pointer ${isAnalyzing?'opacity-50':''}`}><span>{isAnalyzing?'...':'📷'}</span><input type="file" accept="image/*" capture="environment" onChange={handleImageUpload} className="hidden" disabled={isAnalyzing} /></label>
         </div>
       </div>
-
-      <div className="space-y-2">
-        {displayItems.map(item => (
-          <StockItem key={item.id} item={item} isEditing={editingId === item.id} editName={editName} editQuantity={editQuantity} setEditName={setEditName} setEditQuantity={setEditQuantity} onSave={saveEdit} onCancel={() => setEditingId(null)} onEditStart={() => startEditing(item)} onToggleStatus={toggleStatus} onDelete={deleteItem} />
-        ))}
-      </div>
+      <div className="space-y-2">{displayItems.map(item => <StockItem key={item.id} item={item} isEditing={editingId === item.id} editName={editName} editQuantity={editQuantity} setEditName={setEditName} setEditQuantity={setEditQuantity} onSave={saveEdit} onCancel={() => setEditingId(null)} onEditStart={() => startEditing(item)} onToggleStatus={toggleStatus} onDelete={deleteItem} />)}</div>
     </div>
   );
 }
@@ -323,19 +325,8 @@ function StockItem({ item, isEditing, editName, editQuantity, setEditName, setEd
   }
   return (
     <div className={`flex items-center p-3 rounded-lg border shadow-sm ${item.status === 'buy' ? 'bg-red-50 border-red-200' : 'bg-white'}`}>
-      <div className="flex-1">
-        <div className="flex items-center gap-2">
-          <span className={`font-bold ${item.status === 'buy' ? 'text-red-500' : 'text-gray-800'}`}>{item.name}</span>
-          <button onClick={onEditStart} className="text-gray-300 hover:text-blue-500 text-xs">✏️</button>
-        </div>
-        {item.quantity && <span className="text-xs text-gray-500">{item.quantity}</span>}
-      </div>
-      <div className="flex gap-2">
-        <button onClick={() => onToggleStatus(item.id, item.status)} className={`text-xs px-3 py-1 rounded-full font-bold ${item.status === 'ok' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-          {item.status === 'ok' ? 'ある' : 'ない'}
-        </button>
-        <button onClick={() => onDelete(item.id)} className="text-gray-300 px-2">✕</button>
-      </div>
+      <div className="flex-1"><div className="flex items-center gap-2"><span className={`font-bold ${item.status === 'buy' ? 'text-red-500' : 'text-gray-800'}`}>{item.name}</span><button onClick={onEditStart} className="text-gray-300 hover:text-blue-500 text-xs">✏️</button></div>{item.quantity && <span className="text-xs text-gray-500">{item.quantity}</span>}</div>
+      <div className="flex gap-2"><button onClick={() => onToggleStatus(item.id, item.status)} className={`text-xs px-3 py-1 rounded-full font-bold ${item.status === 'ok' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{item.status === 'ok' ? 'ある' : 'ない'}</button><button onClick={() => onDelete(item.id)} className="text-gray-300 px-2">✕</button></div>
     </div>
   );
 }
