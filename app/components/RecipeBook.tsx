@@ -6,12 +6,11 @@ import { supabase } from '@/lib/supabase';
 type Recipe = { id: number; title: string; url: string; ingredients: string[]; steps: string[]; };
 type StockItem = { id: number; name: string; quantity: string; status: 'ok' | 'buy'; category: string; };
 
-// ★追加：言葉のゆらぎ変換リスト（辞書）
-// 在庫にある名前（キー）に対して、レシピに出てきそうな別名（値）を登録
+// 強化版：言葉のゆらぎ変換リスト
 const SYNONYM_MAP: Record<string, string[]> = {
   "卵": ["たまご", "玉子", "エッグ"],
   "たまご": ["卵", "玉子"],
-  "鶏肉": ["とり肉", "鶏", "チキン", "鶏もも", "鶏むね", "ささみ"],
+  "鶏肉": ["とり肉", "鶏", "チキン", "鶏もも", "鶏むね", "ささみ", "手羽"],
   "鶏もも肉": ["鶏肉", "とり肉", "鶏もも"],
   "豚肉": ["ぶた肉", "豚", "ポーク", "豚バラ", "豚こま", "豚ロース"],
   "牛肉": ["ぎゅう肉", "牛", "ビーフ"],
@@ -19,7 +18,7 @@ const SYNONYM_MAP: Record<string, string[]> = {
   "玉ねぎ": ["たまねぎ", "タマネギ", "オニオン"],
   "人参": ["にんじん", "ニンジン"],
   "じゃがいも": ["ジャガイモ", "ポテト", "馬鈴薯"],
-  "葱": ["ねぎ", "ネギ", "長ネギ", "万能ねぎ"],
+  "葱": ["ねぎ", "ネギ", "長ネギ", "万能ねぎ", "小ねぎ"],
   "生姜": ["しょうが", "ショウガ"],
   "大蒜": ["にんにく", "ニンニク", "ガーリック"],
   "醤油": ["しょうゆ", "ショウユ", "正油"],
@@ -29,11 +28,14 @@ const SYNONYM_MAP: Record<string, string[]> = {
   "胡椒": ["こしょう", "コショウ", "ペッパー"],
   "酒": ["料理酒", "日本酒"],
   "みりん": ["味醂", "本みりん"],
-  "油": ["サラダ油", "キャノーラ油", "オリーブオイル", "ごま油"],
+  "油": ["サラダ油", "キャノーラ油", "オリーブオイル", "ごま油", "米油"],
   "マヨネーズ": ["マヨ"],
   "ケチャップ": ["トマトケチャップ"],
   "コンソメ": ["固形コンソメ", "顆粒コンソメ"],
-  "出汁": ["だし", "ダシ", "ほんだし"],
+  "出汁": ["だし", "ダシ", "ほんだし", "かつおだし", "昆布だし"],
+  "中華だし": ["鶏ガラスープ", "ウェイパー", "創味シャンタン"],
+  "味噌": ["みそ"],
+  "酢": ["お酢", "ビネガー"],
 };
 
 export default function RecipeBook() {
@@ -76,37 +78,40 @@ export default function RecipeBook() {
     setEditingTitleId(null);
   };
 
-  // ★ 超・強化版：在庫照合ロジック
+  // ★ 誤判定修正版：在庫照合ロジック
   const findStockMatch = (ingredientText: string) => {
-    // 1. 文字列を正規化（カタカナ→ひらがな、スペース削除）
     const normalize = (str: string) => str.replace(/[\u30a1-\u30f6]/g, m => String.fromCharCode(m.charCodeAt(0) - 0x60)).replace(/\s+/g, '');
     const target = normalize(ingredientText);
 
     return stockItems.find(stock => {
-      // 在庫切れのものは無視
       if (stock.status !== 'ok') return false;
 
       const stockNameRaw = stock.name;
       const stockNameNorm = normalize(stockNameRaw);
 
       // A. 完全一致・包含チェック（基本）
+      // 「醤油」の中に「油」が含まれていても、ここでは単純比較なのでOK
       if (stockNameNorm.length > 1 && target.includes(stockNameNorm)) return true;
       if (target.length > 1 && stockNameNorm.includes(target)) return true;
 
       // B. 辞書チェック（応用）
-      // 在庫名が辞書のキーにある場合（例: 在庫が「しょうゆ」）
-      if (SYNONYM_MAP[stockNameRaw]) {
-        // 辞書のリスト（["醤油", "正油"]）のどれかが、レシピの材料に含まれていればOK
-        if (SYNONYM_MAP[stockNameRaw].some(synonym => target.includes(normalize(synonym)))) return true;
-      }
-      
-      // 在庫名が辞書の「値」のどれかと一致する場合（例: 在庫が「醤油」で、キーが「しょうゆ」）
-      // 逆引き検索
+      // 「在庫名」が辞書にあるかチェック（例：在庫「サラダ油」）
       for (const [key, synonyms] of Object.entries(SYNONYM_MAP)) {
-        // もし在庫名が類語リストのどれかと一致したら
+        // 在庫名が、辞書の「キー」または「類語」と一致したら
         if (normalize(key) === stockNameNorm || synonyms.some(s => normalize(s) === stockNameNorm)) {
-          // そのキー（代表名）や他の類語がレシピに含まれているかチェック
-          if (target.includes(normalize(key))) return true;
+          
+          // そのキー（代表名）がレシピに含まれているかチェック
+          // 例：キー「油」が、レシピ「醤油」に含まれているか？ → 含まれている！
+          if (target.includes(normalize(key))) {
+             // ★ここが修正ポイント：誤判定の除外ルール
+             // 「油」という文字を見つけても、それが「醤油」の一部なら無視する
+             if (normalize(key) === '油' && (target.includes('醤油') || target.includes('しょうゆ') || target.includes('正油'))) {
+               return false;
+             }
+             return true;
+          }
+
+          // 類語がレシピに含まれているかチェック
           if (synonyms.some(s => target.includes(normalize(s)))) return true;
         }
       }
@@ -129,7 +134,6 @@ export default function RecipeBook() {
         const name = match ? match[1].trim() : raw;
         const qty = match ? match[2].trim() : '';
 
-        // 既存チェック（ここでも正規化を使用）
         const normalize = (str: string) => str.replace(/[\u30a1-\u30f6]/g, m => String.fromCharCode(m.charCodeAt(0) - 0x60)).replace(/\s+/g, '');
         const normName = normalize(name);
         
@@ -141,9 +145,8 @@ export default function RecipeBook() {
         if (existing) {
           await supabase.from('items').update({ quantity: qty || existing.quantity, status: 'ok' }).eq('id', existing.id);
         } else {
-          // カテゴリ自動判定（簡易版）
           let category = 'food';
-          if (name.includes('醤油') || name.includes('油') || name.includes('塩') || name.includes('ソース')) category = 'seasoning';
+          if (name.includes('醤油') || name.includes('油') || name.includes('塩') || name.includes('ソース') || name.includes('だし') || name.includes('素')) category = 'seasoning';
           if (name.includes('ペーパー') || name.includes('洗剤')) category = 'other';
 
           await supabase.from('items').insert([{ name, quantity: qty, category, status: 'ok' }]);
