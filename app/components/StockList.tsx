@@ -19,7 +19,7 @@ type Recipe = {
   title: string;
   type: string;
   difficulty: '簡単' | '普通' | '難しい';
-  calories: number; // カロリー追加
+  calories: number;
   ingredients: string[];
   steps: string[];
 };
@@ -36,11 +36,13 @@ export default function StockList({ view }: { view: ViewType }) {
   
   // 献立用
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
-  // 今回使う量を保存する場所 { アイテムID: "100g" }
   const [useQuantities, setUseQuantities] = useState<Record<number, string>>({});
   
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+  
+  // ★追加：AI読み込み中フラグ
+  const [loading, setLoading] = useState(false);
 
   // データ読み込み
   const fetchItems = async () => {
@@ -49,15 +51,13 @@ export default function StockList({ view }: { view: ViewType }) {
   };
   useEffect(() => { fetchItems(); }, []);
 
-  // アイテム追加
+  // アイテム操作系
   const addItem = async () => {
     if (!newItemName) return;
     const category: Category = view === 'menu' ? 'food' : (view as Category);
     const { error } = await supabase.from('items').insert([{ name: newItemName, quantity: newItemQuantity, category, status: 'ok' }]);
     if (!error) { setNewItemName(''); setNewItemQuantity(''); fetchItems(); }
   };
-  
-  // 編集・削除・ステータス
   const startEditing = (item: Item) => { setEditingId(item.id); setEditName(item.name); setEditQuantity(item.quantity || ''); };
   const saveEdit = async () => {
     if (editingId === null) return;
@@ -76,7 +76,6 @@ export default function StockList({ view }: { view: ViewType }) {
     await supabase.from('items').delete().eq('id', id);
   };
 
-  // チェックボックス切替
   const toggleSelection = (id: number) => {
     if (selectedIds.includes(id)) {
       setSelectedIds(selectedIds.filter(sid => sid !== id));
@@ -88,75 +87,50 @@ export default function StockList({ view }: { view: ViewType }) {
     }
   };
 
-  // 使う量の入力ハンドラ
   const handleQuantityChange = (id: number, val: string) => {
     setUseQuantities({ ...useQuantities, [id]: val });
-    if (!selectedIds.includes(id) && val !== '') {
-      setSelectedIds([...selectedIds, id]);
-    }
+    if (!selectedIds.includes(id) && val !== '') setSelectedIds([...selectedIds, id]);
   };
 
-  // ★レシピ生成ロジック
-  const generateMenu = () => {
+  // ★ AI献立生成ロジック (APIを呼び出す)
+  const generateMenu = async () => {
     const selectedFoods = items.filter(i => selectedIds.includes(i.id) && i.category === 'food');
     if (selectedFoods.length === 0) { alert("食材を選んでください！"); return; }
 
-    const availableSeasonings = items.filter(i => i.category === 'seasoning' && i.status === 'ok').map(i => i.name);
-    const getSeasoning = () => availableSeasonings.length > 0 ? availableSeasonings.sort(() => 0.5 - Math.random()).slice(0, 2).join('と') : '塩・こしょう';
-
-    const main = selectedFoods[0];
-    
-    // 材料リスト生成（入力された「使う量」を優先表示）
-    const allIngredients = selectedFoods.map(f => {
-      const quantity = useQuantities[f.id] || f.quantity || '適量';
-      return `${f.name} (${quantity})`;
-    }).join('、');
-    
-    const seasoning = getSeasoning();
-    const foodNames = selectedFoods.map(f => f.name).join('と');
-
-    setRecipes([
-      {
-        title: `${main.name}のパパっと炒め`, 
-        type: '🔥 炒め物',
-        difficulty: '簡単',
-        calories: 580,
-        ingredients: [allIngredients, seasoning, 'サラダ油 大さじ1'],
-        steps: [
-          '【下準備】野菜は水洗いし、食べやすい大きさ（3〜4cm幅）に切ります。お肉の場合は一口大に切ります。',
-          'フライパンにサラダ油をひき、中火〜強火でしっかりと温めます。',
-          `切った${foodNames}を入れます。あまり触りすぎず、焼き色がつくように炒めます。`,
-          `全体に火が通ったら、${seasoning}を回し入れ、サッと混ぜ合わせて完成です！`
-        ]
-      },
-      {
-        title: `${main.name}のじっくり煮込み`, 
-        type: '🍲 煮込み',
-        difficulty: '普通',
-        calories: 450,
-        ingredients: [allIngredients, seasoning, '水 300ml'],
-        steps: [
-          '【下準備】煮崩れを防ぐため、食材は少し大きめにカットします。',
-          `鍋に少量の油（分量外）を熱し、${foodNames}の表面を軽く焼いて旨味を閉じ込めます。`,
-          `水と${seasoning}を加え、沸騰したら弱火にします。アク（白い泡）が出てきたらスプーンで取り除きます。`,
-          '落とし蓋（アルミホイルで代用可）をして20分ほどコトコト煮込み、味が染みたら完成です。'
-        ]
-      },
-      {
-        title: `${main.name}のガリバタ醤油ソテー`, 
-        type: '👨‍🍳 アレンジ',
-        difficulty: '難しい',
-        calories: 620,
-        ingredients: [allIngredients, seasoning, 'バター 10g', 'にんにく 1片（チューブでも可）'],
-        steps: [
-          '【下準備】食材の水気をキッチンペーパーで拭き取ります（味がボヤけるのを防ぐため）。',
-          `フライパンにバターとにんにくを入れ、弱火で香りが出るまで熱します（焦げないように注意）。`,
-          `${foodNames}を入れ、中火で両面に焼き色がつくまで焼きます。`,
-          `仕上げに${seasoning}を鍋肌から回し入れ、全体に絡めたら完成です。`
-        ]
-      }
-    ]);
+    setLoading(true);
+    setRecipes([]); // 一旦クリア
     setExpandedIndex(null);
+
+    // AIに送るための食材リスト作成
+    const ingredientsToSend = selectedFoods.map(f => {
+      const qty = useQuantities[f.id] || f.quantity || '';
+      return qty ? `${f.name}(${qty})` : f.name;
+    });
+
+    // 在庫にある調味料リスト
+    const availableSeasonings = items
+      .filter(i => i.category === 'seasoning' && i.status === 'ok')
+      .map(i => i.name)
+      .join('、');
+
+    try {
+      const res = await fetch('/api/menu', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          ingredients: ingredientsToSend,
+          seasoning: availableSeasonings || '塩、こしょう、醤油など一般的な調味料'
+        }),
+      });
+
+      if (!res.ok) throw new Error('生成エラー');
+      const data = await res.json();
+      setRecipes(data);
+    } catch (e) {
+      alert('AIが混み合っているか、エラーが発生しました。もう一度お試しください。');
+    } finally {
+      setLoading(false);
+    }
   };
 
   // ★★★ 献立・レシピ画面 ★★★
@@ -185,13 +159,12 @@ export default function StockList({ view }: { view: ViewType }) {
                     <div className="font-bold text-gray-800">{item.name}</div>
                     <div className="text-xs text-gray-400">在庫: {item.quantity || '未設定'}</div>
                   </div>
-                  {/* 使う量の入力欄 */}
                   <input
                     type="text"
-                    placeholder="使う量(100g等)"
+                    placeholder="使う量"
                     value={useQuantities[item.id] || ''}
                     onChange={(e) => handleQuantityChange(item.id, e.target.value)}
-                    className="border p-1 rounded text-sm w-28 text-right text-black bg-gray-50 focus:bg-white"
+                    className="border p-1 rounded text-sm w-24 text-right text-black bg-gray-50 focus:bg-white"
                   />
                 </div>
               ))
@@ -199,19 +172,27 @@ export default function StockList({ view }: { view: ViewType }) {
           </div>
           <button 
             onClick={generateMenu} 
-            disabled={selectedIds.length === 0}
-            className={`w-full py-3 rounded-lg font-bold text-white shadow transition ${
+            disabled={selectedIds.length === 0 || loading}
+            className={`w-full py-3 rounded-lg font-bold text-white shadow transition flex justify-center items-center gap-2 ${
+              loading ? 'bg-indigo-400 cursor-wait' : 
               selectedIds.length === 0 ? 'bg-gray-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'
             }`}
           >
-            {selectedIds.length === 0 ? '食材を選んでください' : `${selectedIds.length}個の食材でレシピを考える！`}
+            {loading ? (
+              <>
+                <span className="animate-spin text-xl">⏳</span>
+                <span>AIシェフが10個のレシピを考案中...</span>
+              </>
+            ) : (
+              selectedIds.length === 0 ? '食材を選んでください' : `✨ ${selectedIds.length}個の食材で10案考える！`
+            )}
           </button>
         </div>
 
         {/* ステップ2：レシピ提案 */}
         {recipes.length > 0 && (
           <div className="space-y-4">
-            <h3 className="font-bold text-gray-700 px-2">② 提案メニュー（クリックして詳細）</h3>
+            <h3 className="font-bold text-gray-700 px-2">② AIシェフの提案メニュー (10選)</h3>
             
             {recipes.map((recipe, index) => {
               const isOpen = expandedIndex === index;
@@ -244,7 +225,7 @@ export default function StockList({ view }: { view: ViewType }) {
                         </ul>
                       </div>
                       <div>
-                        <h5 className="font-bold text-gray-700 mb-2 border-l-4 border-orange-500 pl-2">🔥 作り方（詳しく）</h5>
+                        <h5 className="font-bold text-gray-700 mb-2 border-l-4 border-orange-500 pl-2">🔥 作り方</h5>
                         <ol className="list-decimal pl-5 text-gray-700 space-y-3">
                           {recipe.steps.map((step, i) => <li key={i} className="leading-relaxed">{step}</li>)}
                         </ol>
