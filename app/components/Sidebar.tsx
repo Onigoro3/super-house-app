@@ -31,7 +31,7 @@ export default function Sidebar({ isOpen, onClose, currentView, onChangeView }: 
   const MenuContent = () => (
     <div className="h-full flex flex-col bg-white border-r">
       <div className="p-6 border-b flex justify-between items-center bg-indigo-600 text-white md:bg-white md:text-indigo-600">
-        <h2 className="font-bold text-xl md:text-2xl">Super House</h2>
+        <h2 className="font-bold text-xl md:text-2xl">AI献立アプリ</h2>
         <button onClick={onClose} className="text-2xl md:hidden">✕</button>
       </div>
       <nav className="p-4 space-y-2 flex-1 overflow-y-auto">

@@ -3,13 +3,12 @@
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import Auth from './components/Auth'; // Authはそのまま使える
+import Auth from './components/Auth';
 
 export default function Launcher() {
   const [session, setSession] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
-  // ログインチェック
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => { setSession(session); setLoading(false); });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => { setSession(session); setLoading(false); });
@@ -19,10 +18,13 @@ export default function Launcher() {
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-gray-900 text-white">Loading...</div>;
   if (!session) return <Auth onLogin={() => {}} />;
 
-  // ★アプリのリスト（今後ここを増やしていく）
   const apps = [
-    { name: 'Super House', icon: '🏠', color: 'bg-indigo-500', link: '/house', desc: '在庫・献立・レシピ' },
-    { name: '計算機', icon: '🧮', color: 'bg-orange-400', link: '#', desc: '準備中' },
+    // ★変更: 名前を「AI献立アプリ」、アイコンをキッチン風(🍳)、色をオレンジに
+    { name: 'AI献立アプリ', icon: '🍳', color: 'bg-orange-400', link: '/house', desc: '在庫・献立・レシピ' },
+    
+    // ★追加: PDF編集アプリへのリンク
+    { name: 'PDF編集', icon: '📄', color: 'bg-red-500', link: '/pdf', desc: '結合・編集' },
+    
     { name: 'ToDo', icon: '✅', color: 'bg-green-500', link: '#', desc: '準備中' },
     { name: 'カレンダー', icon: '📅', color: 'bg-blue-500', link: '#', desc: '準備中' },
     { name: 'メモ帳', icon: '📝', color: 'bg-yellow-400', link: '#', desc: '準備中' },
@@ -33,8 +35,6 @@ export default function Launcher() {
 
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6 flex flex-col items-center">
-      
-      {/* 時計とかステータスバーっぽい装飾 */}
       <div className="w-full max-w-lg mb-10 mt-4 flex justify-between items-end">
         <div>
           <h1 className="text-3xl font-bold">Good Morning</h1>
@@ -45,13 +45,11 @@ export default function Launcher() {
         </div>
       </div>
 
-      {/* アイコンのグリッド表示 */}
       <div className="grid grid-cols-3 gap-6 max-w-lg w-full">
         {apps.map((app, index) => (
           <Link key={index} href={app.link} className="flex flex-col items-center group">
             <div className={`w-20 h-20 ${app.color} rounded-2xl shadow-lg flex items-center justify-center text-4xl mb-2 transition-transform transform group-hover:scale-105 group-active:scale-95 relative overflow-hidden`}>
-              {/* 光沢のエフェクト */}
-              <div className="absolute top-0 left-0 w-full h-1/2 bg-white opacity-10 rounded-t-2xl pointer-events-none"></div>
+              <div className="absolute top-0 left-0 w-full h-1/2 bg-white opacity-20 rounded-t-2xl pointer-events-none"></div>
               {app.icon}
             </div>
             <span className="text-xs font-medium tracking-wide text-gray-300 group-hover:text-white transition-colors">{app.name}</span>
@@ -59,14 +57,12 @@ export default function Launcher() {
         ))}
       </div>
 
-      {/* ドック（下の固定メニューっぽいもの） */}
       <div className="fixed bottom-6 bg-white/10 backdrop-blur-md p-4 rounded-3xl flex gap-6 border border-white/10 shadow-2xl">
         <div className="w-12 h-12 bg-green-500 rounded-xl flex items-center justify-center text-2xl shadow">📞</div>
         <div className="w-12 h-12 bg-blue-500 rounded-xl flex items-center justify-center text-2xl shadow">🌐</div>
         <div className="w-12 h-12 bg-yellow-500 rounded-xl flex items-center justify-center text-2xl shadow">💬</div>
         <div className="w-12 h-12 bg-pink-500 rounded-xl flex items-center justify-center text-2xl shadow">🎵</div>
       </div>
-
     </div>
   );
 }
