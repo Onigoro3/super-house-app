@@ -1,7 +1,8 @@
 // app/components/Sidebar.tsx
 'use client';
 
-type ViewType = 'food' | 'seasoning' | 'other' | 'menu' | 'money' | 'youtube' | 'recipebook';
+// ★ glossary を追加
+type ViewType = 'food' | 'seasoning' | 'other' | 'menu' | 'money' | 'youtube' | 'recipebook' | 'glossary';
 
 type Props = {
   isOpen: boolean;
@@ -17,6 +18,7 @@ export default function Sidebar({ isOpen, onClose, currentView, onChangeView }: 
     { id: 'other', label: '日用品の在庫', icon: '🧻' },
     { id: 'menu', label: '献立・レシピ', icon: '👨‍🍳' },
     { id: 'recipebook', label: '保存レシピ帳', icon: '📖' },
+    { id: 'glossary', label: '料理用語じてん', icon: '📚' }, // ★ここを追加
     { id: 'youtube', label: '動画分析', icon: '📺' },
     { id: 'money', label: '資産管理', icon: '💰' },
   ];
@@ -38,21 +40,16 @@ export default function Sidebar({ isOpen, onClose, currentView, onChangeView }: 
           </button>
         ))}
       </nav>
-      <div className="p-4 text-xs text-center text-gray-400 border-t">v2.5 PC/Mobile</div>
+      <div className="p-4 text-xs text-center text-gray-400 border-t">v3.0 Glossary Added</div>
     </div>
   );
 
   return (
     <>
-      {/* スマホ用オーバーレイ（黒い膜） */}
       {isOpen && <div className="fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden" onClick={onClose} />}
-      
-      {/* スマホ用サイドバー（スライド式） */}
       <div className={`fixed top-0 left-0 h-full w-64 bg-white shadow-2xl z-50 transform transition-transform duration-300 md:hidden ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <MenuContent />
       </div>
-
-      {/* PC用サイドバー（常時表示） */}
       <div className="hidden md:block w-64 h-screen sticky top-0 shadow-lg z-10">
         <MenuContent />
       </div>
