@@ -1,6 +1,6 @@
 // app/pdf/PDFViewer.tsx
 'use client';
-import { useRef, useState, useEffect, Dispatch, SetStateAction } from 'react';
+import React, { useRef, useState, useEffect, Dispatch, SetStateAction } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
@@ -28,14 +28,28 @@ type Props = {
   pageNumber: number;
   currentColor: string;
   currentSize: number;
-  showGrid: boolean; // ★追加
+  showGrid: boolean;
   onLoadSuccess: (data: { numPages: number }) => void;
   annotations: Annotation[];
   setAnnotations: Dispatch<SetStateAction<Annotation[]>>;
   selectedId: number | null;
   setSelectedId: (id: number | null) => void;
-  onHistoryPush: () => void; // ★追加: 操作履歴を保存するトリガー
+  onHistoryPush: () => void;
 };
+
+// ★高速化の鍵：PDFページ描画部分だけを切り出して「メモ化（再描画防止）」する
+const MemoizedPDFPage = React.memo(({ pageNumber, scale }: { pageNumber: number, scale: number }) => {
+  return (
+    <Page 
+      pageNumber={pageNumber} 
+      scale={scale} 
+      renderTextLayer={false} 
+      renderAnnotationLayer={false} 
+      className="bg-white shadow-md"
+    />
+  );
+});
+MemoizedPDFPage.displayName = 'MemoizedPDFPage';
 
 export default function PDFViewer({ 
   file, zoom, tool, setTool, pageNumber, 
@@ -44,7 +58,7 @@ export default function PDFViewer({
   selectedId, setSelectedId, onHistoryPush
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const GRID_SIZE = 20; // グリッドの間隔
+  const GRID_SIZE = 20;
 
   const [dragState, setDragState] = useState<{
     mode: 'move' | 'resize' | null;
@@ -57,7 +71,6 @@ export default function PDFViewer({
     handle?: string;
   }>({ mode: null, startX:0, startY:0, startLeft:0, startTop:0, startWidth:0, startHeight:0 });
 
-  // 座標をグリッドに吸着させる関数
   const snap = (val: number) => {
     if (!showGrid) return val;
     return Math.round(val / GRID_SIZE) * GRID_SIZE;
@@ -67,21 +80,21 @@ export default function PDFViewer({
     if (dragState.mode) return;
 
     if (!tool) {
-      if (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('react-pdf__Page')) {
+      // ツールがない時は選択解除
+      if (e.target === e.currentTarget || (e.target as HTMLElement).className.includes('grid-layer')) {
         setSelectedId(null);
       }
       return;
     }
 
     if (!containerRef.current) return;
-    onHistoryPush(); // 操作前に履歴保存
+    onHistoryPush();
 
     const rect = containerRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     const scale = zoom / 100;
 
-    // グリッド吸着
     const finalX = showGrid ? snap(x / scale) : x / scale;
     const finalY = showGrid ? snap(y / scale) : y / scale;
 
@@ -107,7 +120,7 @@ export default function PDFViewer({
     e.stopPropagation();
     if (tool) return;
 
-    onHistoryPush(); // 操作開始時に履歴保存
+    onHistoryPush();
     setSelectedId(id);
     const annot = annotations.find(a => a.id === id);
     if (!annot) return;
@@ -138,28 +151,20 @@ export default function PDFViewer({
         if (dragState.mode === 'move') {
           let newX = dragState.startLeft + deltaX;
           let newY = dragState.startTop + deltaY;
-          
-          // 移動中もグリッド吸着
-          if (showGrid) {
-            newX = snap(newX);
-            newY = snap(newY);
-          }
+          if (showGrid) { newX = snap(newX); newY = snap(newY); }
           return { ...a, x: newX, y: newY };
-        }
-        
+        } 
         else if (dragState.mode === 'resize') {
           let newW = dragState.startWidth;
           let newH = dragState.startHeight;
 
+          // ハンドル操作
           if (dragState.handle?.includes('e')) newW = Math.max(10, dragState.startWidth + deltaX);
+          if (dragState.handle?.includes('w')) newW = Math.max(10, dragState.startWidth - deltaX); // 左方向リサイズ用（簡易）
           if (dragState.handle?.includes('s')) newH = Math.max(10, dragState.startHeight + deltaY);
-          
-          // リサイズも吸着（オプション）
-          if (showGrid) {
-             newW = snap(newW);
-             newH = snap(newH);
-          }
+          if (dragState.handle?.includes('n')) newH = Math.max(10, dragState.startHeight - deltaY); // 上方向リサイズ用（簡易）
 
+          if (showGrid) { newW = snap(newW); newH = snap(newH); }
           return { ...a, width: newW, height: newH };
         }
         return a;
@@ -193,41 +198,38 @@ export default function PDFViewer({
   };
 
   const currentPageAnnotations = annotations.filter(a => a.page === pageNumber);
+  const scale = zoom / 100;
 
   return (
-    <div className="shadow-2xl relative inline-block select-none">
+    <div className="shadow-2xl relative inline-block select-none bg-gray-200">
       <Document
         file={file}
         onLoadSuccess={onLoadSuccess}
-        loading={<div className="text-white">PDFを読み込み中...</div>}
-        error={<div className="text-red-300">PDFを開けませんでした</div>}
+        loading={<div className="text-white p-4">PDFを読み込み中...</div>}
+        error={<div className="text-red-500 p-4">PDFを開けませんでした</div>}
       >
         <div 
           ref={containerRef} 
           onClick={handlePageClick}
           className={`relative ${tool ? 'cursor-crosshair' : 'cursor-default'}`}
         >
-          {/* グリッドレイヤー */}
+          {/* ★高速化: メモ化したPDFページを表示 */}
+          <MemoizedPDFPage pageNumber={pageNumber} scale={scale} />
+
+          {/* ★グリッドレイヤー (PDFの上に表示するため zIndex: 1, pointerEvents: none) */}
           {showGrid && (
             <div 
+              className="grid-layer"
               style={{
-                position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
-                backgroundImage: `linear-gradient(#ddd 1px, transparent 1px), linear-gradient(90deg, #ddd 1px, transparent 1px)`,
-                backgroundSize: `${GRID_SIZE * (zoom/100)}px ${GRID_SIZE * (zoom/100)}px`
+                position: 'absolute', inset: 0, zIndex: 1, pointerEvents: 'none',
+                backgroundImage: `linear-gradient(rgba(0,0,255,0.2) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,255,0.2) 1px, transparent 1px)`,
+                backgroundSize: `${GRID_SIZE * scale}px ${GRID_SIZE * scale}px`
               }} 
             />
           )}
 
-          <Page 
-            pageNumber={pageNumber} 
-            scale={zoom / 100} 
-            renderTextLayer={false} 
-            renderAnnotationLayer={false} 
-            className="bg-white"
-          />
-
+          {/* アノテーションレイヤー (zIndex: 10〜) */}
           {currentPageAnnotations.map((annot) => {
-            const scale = zoom / 100;
             const isSelected = selectedId === annot.id;
             const w = (annot.width || 60) * scale;
             const h = (annot.height || 40) * scale;
@@ -246,16 +248,16 @@ export default function PDFViewer({
                   transform: annot.type === 'line' ? 'none' : 'translate(-50%, -50%)',
                   border: isSelected ? '1px dashed #3B82F6' : 'none',
                   cursor: tool ? 'crosshair' : 'move',
-                  zIndex: isSelected ? 100 : 10
+                  zIndex: isSelected ? 100 : 10 // 選択中は最前面
                 }}
               >
-                <div className="w-full h-full relative flex items-center justify-center">
+                <div className="w-full h-full relative flex items-center justify-center pointer-events-none"> {/* 中身はクリック透過 */}
                   
                   {annot.type === 'text' && (
                     <textarea
                       value={annot.content}
                       onChange={(e) => updateText(annot.id, e.target.value)}
-                      className="w-full h-full bg-transparent border-none outline-none resize-none overflow-hidden"
+                      className="w-full h-full bg-transparent border-none outline-none resize-none overflow-hidden pointer-events-auto" // テキスト入力は有効化
                       style={{ 
                         color: annot.color,
                         fontSize: `${annot.size * scale}px`,
@@ -271,38 +273,29 @@ export default function PDFViewer({
                   )}
 
                   {annot.type === 'rect' && (
-                    <div style={{
-                      width: '100%', height: '100%',
-                      border: `${Math.max(2, annot.size/3 * scale)}px solid ${annot.color}`,
-                    }}></div>
+                    <div style={{ width: '100%', height: '100%', border: `${Math.max(2, annot.size/3 * scale)}px solid ${annot.color}` }}></div>
                   )}
 
                   {annot.type === 'circle' && (
-                    <div style={{
-                      width: '100%', height: '100%',
-                      border: `${Math.max(2, annot.size/3 * scale)}px solid ${annot.color}`,
-                      borderRadius: '50%'
-                    }}></div>
+                    <div style={{ width: '100%', height: '100%', border: `${Math.max(2, annot.size/3 * scale)}px solid ${annot.color}`, borderRadius: '50%' }}></div>
                   )}
 
                   {annot.type === 'line' && (
                     <svg width="100%" height="100%" style={{ overflow: 'visible' }}>
-                      <line 
-                        x1="0" y1="0" x2="100%" y2="100%" 
-                        stroke={annot.color} strokeWidth={Math.max(2, annot.size/3 * scale)} 
-                      />
+                      <line x1="0" y1="0" x2="100%" y2="100%" stroke={annot.color} strokeWidth={Math.max(2, annot.size/3 * scale)} />
                     </svg>
                   )}
 
                   {annot.type === 'white' && (
-                    <div className="w-full h-full bg-white"></div>
+                    <div className="w-full h-full bg-white border border-gray-100"></div>
                   )}
                 </div>
 
+                {/* リサイズハンドル */}
                 {isSelected && !tool && (
                   <div
                     onMouseDown={(e) => handleMouseDown(e, annot.id, 'resize', 'se')}
-                    className="absolute bottom-0 right-0 w-4 h-4 bg-blue-500 border border-white cursor-se-resize"
+                    className="absolute bottom-0 right-0 w-4 h-4 bg-blue-500 border border-white cursor-se-resize pointer-events-auto"
                     style={{ transform: 'translate(50%, 50%)' }}
                   />
                 )}
