@@ -6,17 +6,35 @@ import { supabase } from '@/lib/supabase';
 type Category = 'food' | 'seasoning' | 'other';
 type Status = 'ok' | 'buy';
 type ViewType = 'food' | 'seasoning' | 'other' | 'menu';
-type Item = { id: number; name: string; quantity: string; category: Category; status: Status; };
-type Recipe = { title: string; type: string; difficulty: string; calories: number; ingredients: string[]; steps: string[]; };
+
+type Item = {
+  id: number;
+  name: string;
+  quantity: string;
+  category: Category;
+  status: Status;
+};
+
+type Recipe = {
+  title: string;
+  type: string;
+  difficulty: '簡単' | '普通' | '難しい';
+  calories: number;
+  ingredients: string[];
+  steps: string[];
+};
 
 export default function StockList({ view }: { view: ViewType }) {
   const [items, setItems] = useState<Item[]>([]);
+  
+  // 入力・編集用
   const [newItemName, setNewItemName] = useState('');
   const [newItemQuantity, setNewItemQuantity] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState('');
   const [editQuantity, setEditQuantity] = useState('');
   
+  // 献立用
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [useQuantities, setUseQuantities] = useState<Record<number, string>>({});
   const [includeRice, setIncludeRice] = useState(false);
@@ -24,17 +42,22 @@ export default function StockList({ view }: { view: ViewType }) {
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // ★追加：画像解析中フラグ
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+
+  // データ読み込み
   const fetchItems = async () => {
-    const { data } = await supabase.from('items').select('*').order('created_at', { ascending: true });
-    if (data) setItems(data);
+    const { data, error } = await supabase.from('items').select('*').order('created_at', { ascending: true });
+    if (!error) setItems(data || []);
   };
   useEffect(() => { fetchItems(); }, []);
 
+  // アイテム操作系
   const addItem = async () => {
     if (!newItemName) return;
     const category: Category = view === 'menu' ? 'food' : (view as Category);
-    await supabase.from('items').insert([{ name: newItemName, quantity: newItemQuantity, category, status: 'ok' }]);
-    setNewItemName(''); setNewItemQuantity(''); fetchItems();
+    const { error } = await supabase.from('items').insert([{ name: newItemName, quantity: newItemQuantity, category, status: 'ok' }]);
+    if (!error) { setNewItemName(''); setNewItemQuantity(''); fetchItems(); }
   };
   const startEditing = (item: Item) => { setEditingId(item.id); setEditName(item.name); setEditQuantity(item.quantity || ''); };
   const saveEdit = async () => {
@@ -53,10 +76,12 @@ export default function StockList({ view }: { view: ViewType }) {
     setSelectedIds(selectedIds.filter(sid => sid !== id));
     await supabase.from('items').delete().eq('id', id);
   };
+
+  // 献立用チェックボックス
   const toggleSelection = (id: number) => {
     if (selectedIds.includes(id)) {
       setSelectedIds(selectedIds.filter(sid => sid !== id));
-      const next = { ...useQuantities }; delete next[id]; setUseQuantities(next);
+      const newQuantities = { ...useQuantities }; delete newQuantities[id]; setUseQuantities(newQuantities);
     } else {
       setSelectedIds([...selectedIds, id]);
     }
@@ -66,6 +91,58 @@ export default function StockList({ view }: { view: ViewType }) {
     if (!selectedIds.includes(id) && val !== '') setSelectedIds([...selectedIds, id]);
   };
 
+  // ★追加：画像アップロード＆解析処理
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsAnalyzing(true);
+    const reader = new FileReader();
+    
+    reader.onloadend = async () => {
+      const base64 = reader.result as string;
+      try {
+        const res = await fetch('/api/receipt', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ imageBase64: base64 }),
+        });
+
+        if (!res.ok) throw new Error('分析失敗');
+        const itemsData: any[] = await res.json();
+        
+        if (itemsData.length === 0) {
+          alert('食材が見つかりませんでした。');
+          return;
+        }
+
+        // 取得したアイテムを一括登録
+        let count = 0;
+        for (const item of itemsData) {
+           const { error } = await supabase.from('items').insert([{
+             name: item.name, 
+             quantity: item.quantity || '', 
+             category: item.category || 'food', 
+             status: 'ok'
+           }]);
+           if (!error) count++;
+        }
+        
+        alert(`${count}個のアイテムを在庫に追加しました！`);
+        fetchItems(); // リスト更新
+      } catch (err) {
+        alert('画像の解析に失敗しました。もう一度試してください。');
+        console.error(err);
+      } finally {
+        setIsAnalyzing(false);
+        // 同じファイルを再度選べるようにリセット
+        e.target.value = '';
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // AI献立生成
   const generateMenu = async () => {
     const selectedFoods = items.filter(i => selectedIds.includes(i.id) && i.category === 'food');
     if (selectedFoods.length === 0) { alert("食材を選んでください！"); return; }
@@ -89,15 +166,14 @@ export default function StockList({ view }: { view: ViewType }) {
     } catch (e) { alert('生成エラー'); } finally { setLoading(false); }
   };
 
+  // ★★★ 献立・レシピ画面 ★★★
   if (view === 'menu') {
     const foodStock = items.filter(i => i.category === 'food' && i.status === 'ok');
-    // 選択中のアイテムを取得
     const selectedItemsList = items.filter(i => selectedIds.includes(i.id));
 
     return (
       <div className="p-4 space-y-8 pb-24">
         <div className="bg-white p-5 rounded-xl border shadow-sm">
-          {/* ★追加：選択中リスト表示 */}
           {selectedIds.length > 0 && (
             <div className="mb-4 bg-indigo-50 p-3 rounded-lg border border-indigo-100">
               <p className="text-xs font-bold text-indigo-600 mb-2">👇 現在選択中の食材 ({selectedIds.length})</p>
@@ -174,6 +250,7 @@ export default function StockList({ view }: { view: ViewType }) {
     );
   }
 
+  // ★★★ 在庫リスト画面 ★★★
   const categoryMap: Record<string, Category> = { food: 'food', seasoning: 'seasoning', other: 'other' };
   const targetCategory = categoryMap[view];
   const displayItems = items.filter(i => i.category === targetCategory);
@@ -190,11 +267,27 @@ export default function StockList({ view }: { view: ViewType }) {
           <ul className="space-y-1">{shoppingList.map(i => <li key={i.id} className="flex justify-between text-sm bg-white px-2 py-1 rounded"><span>{i.name}</span><span className="text-gray-400">{i.quantity}</span></li>)}</ul>
         </div>
       )}
-      <div className="bg-white p-3 rounded-xl border shadow-sm flex gap-2">
+      
+      {/* 入力フォーム + カメラボタン */}
+      <div className="bg-white p-3 rounded-xl border shadow-sm flex gap-2 items-center">
         <input value={newItemName} onChange={e => setNewItemName(e.target.value)} placeholder="品名を追加" className="border p-2 rounded flex-1 text-black" />
         <input value={newItemQuantity} onChange={e => setNewItemQuantity(e.target.value)} placeholder="分量" className="border p-2 rounded w-20 text-black" />
-        <button onClick={addItem} className="bg-blue-600 text-white px-4 rounded font-bold">＋</button>
+        <button onClick={addItem} className="bg-blue-600 text-white px-4 py-2 rounded font-bold">＋</button>
+        
+        {/* ★カメラボタン */}
+        <label className={`flex items-center justify-center bg-green-600 text-white px-3 py-2 rounded font-bold cursor-pointer hover:bg-green-700 ${isAnalyzing ? 'opacity-50' : ''}`}>
+          <span>{isAnalyzing ? '...' : '📷'}</span>
+          <input 
+            type="file" 
+            accept="image/*" 
+            capture="environment" 
+            onChange={handleImageUpload} 
+            className="hidden" 
+            disabled={isAnalyzing}
+          />
+        </label>
       </div>
+
       <div className="space-y-2">
         {displayItems.map(item => (
           <StockItem key={item.id} item={item} isEditing={editingId === item.id} editName={editName} editQuantity={editQuantity} setEditName={setEditName} setEditQuantity={setEditQuantity} onSave={saveEdit} onCancel={() => setEditingId(null)} onEditStart={() => startEditing(item)} onToggleStatus={toggleStatus} onDelete={deleteItem} />
