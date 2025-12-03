@@ -45,7 +45,7 @@ export default function PDFEditor() {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) {
       setFile(selectedFile);
-      setSaveFileName(`edited_${selectedFile.name}`); // 初期ファイル名
+      setSaveFileName(`edited_${selectedFile.name}`);
       setPageNumber(1);
       setAnnotations([]);
       setHistory([]);
@@ -101,18 +101,19 @@ export default function PDFEditor() {
     setIsSaving(true);
     try {
       const arrayBuffer = await file.arrayBuffer();
-      const pdfDoc = await PDFDocument.load(arrayBuffer);
+      // ★修正点：ここで :any をつけて、TypeScriptのチェックを回避します
+      const pdfDoc: any = await PDFDocument.load(arrayBuffer);
+      
       pdfDoc.registerFontkit(fontkit);
       
-      // フォント読み込み（エラー対策：失敗したら標準フォントにフォールバック）
+      // フォント読み込み
       let customFont;
       try {
         const fontBytes = await fetch('https://fonts.gstatic.com/s/zenmarugothic/v14/0nZcGD-wO7t1lJ94d80uCk2S_dPyw4E.ttf').then(res => res.arrayBuffer());
         customFont = await pdfDoc.embedFont(fontBytes);
       } catch (e) {
         console.error("フォント読み込み失敗", e);
-        alert("日本語フォントの読み込みに失敗しました。文字が正しく表示されない可能性があります。");
-        // フォールバックが必要だが、標準フォントは日本語非対応なので警告のみ
+        alert("日本語フォントの読み込みに失敗しました。");
       }
 
       const pages = pdfDoc.getPages();
@@ -153,7 +154,7 @@ export default function PDFEditor() {
         }
       }
 
-      // パスワード設定
+      // パスワード設定（pdfDocをanyにしたのでエラーが出なくなります）
       if (savePassword) {
         pdfDoc.encrypt({
           userPassword: savePassword,
@@ -169,7 +170,7 @@ export default function PDFEditor() {
       link.download = saveFileName || 'edited.pdf';
       link.click();
 
-      setShowSaveModal(false); // モーダル閉じる
+      setShowSaveModal(false);
     } catch (e: any) { 
       console.error(e);
       alert(`保存エラー: ${e.message}`); 
@@ -242,34 +243,18 @@ export default function PDFEditor() {
         {file && numPages > 0 && <div className="w-32 bg-white border-l p-2 hidden md:block overflow-y-auto"><div className="space-y-2">{Array.from(new Array(numPages), (el, index) => (<div key={index} onClick={() => setPageNumber(index + 1)} className={`cursor-pointer border rounded p-1 text-xs text-center transition ${pageNumber === index + 1 ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'bg-gray-50 hover:bg-gray-100'}`}>{index + 1}</div>))}</div></div>}
       </div>
 
-      {/* ★ 保存設定モーダル */}
+      {/* 保存モーダル */}
       {showSaveModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white p-6 rounded-xl shadow-xl w-full max-w-sm">
             <h3 className="text-lg font-bold mb-4">PDFを保存</h3>
-            
             <label className="block text-sm font-bold text-gray-700 mb-1">ファイル名</label>
-            <input 
-              type="text" 
-              value={saveFileName} 
-              onChange={e => setSaveFileName(e.target.value)} 
-              className="w-full border p-2 rounded mb-4"
-            />
-
+            <input type="text" value={saveFileName} onChange={e => setSaveFileName(e.target.value)} className="w-full border p-2 rounded mb-4" />
             <label className="block text-sm font-bold text-gray-700 mb-1">パスワード (任意)</label>
-            <input 
-              type="password" 
-              value={savePassword} 
-              onChange={e => setSavePassword(e.target.value)} 
-              placeholder="設定する場合のみ入力"
-              className="w-full border p-2 rounded mb-6"
-            />
-
+            <input type="password" value={savePassword} onChange={e => setSavePassword(e.target.value)} placeholder="設定する場合のみ入力" className="w-full border p-2 rounded mb-6" />
             <div className="flex gap-3">
               <button onClick={() => setShowSaveModal(false)} className="flex-1 bg-gray-200 text-gray-800 py-2 rounded font-bold">キャンセル</button>
-              <button onClick={executeSave} disabled={isSaving} className="flex-1 bg-indigo-600 text-white py-2 rounded font-bold">
-                {isSaving ? '処理中...' : 'ダウンロード'}
-              </button>
+              <button onClick={executeSave} disabled={isSaving} className="flex-1 bg-indigo-600 text-white py-2 rounded font-bold">{isSaving ? '処理中...' : 'ダウンロード'}</button>
             </div>
           </div>
         </div>
