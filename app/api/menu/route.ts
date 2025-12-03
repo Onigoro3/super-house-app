@@ -7,37 +7,39 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
 export async function POST(req: Request) {
   try {
-    // servings（人数）を受け取る
     const { ingredients, seasoning, includeRice, dishCount, servings } = await req.json();
-    console.log(`献立生成開始: ${dishCount}品コース, ${servings}人分`);
+    console.log(`献立生成: ${dishCount}品, ${servings}人前`);
 
     const prompt = `
-      あなたは家庭の冷蔵庫にあるものだけで料理を作る「在庫処分の天才シェフ」です。
+      あなたはプロの料理家です。
       以下の「在庫食材」と「在庫調味料」**だけ**を使って、${servings}人分の献立セットを【5パターン】考案してください。
 
-      【絶対に守るルール】
-      1. **在庫にない食材・調味料は絶対に使わないこと。**
-         （水、塩、こしょう、サラダ油の4つだけは在庫になくても使用可とします。それ以外は不可）
-      2. 「買い物に行かずに作れる」ことが絶対条件です。
-      3. 各料理の材料には、${servings}人分の具体的な分量（g数や個数）を必ず明記すること。「適量」は禁止。
+      【ルール】
+      1. 在庫にない食材は極力使わない（水、塩、こしょう、油はOK）。
+      2. 「買い物に行かずに作れる」ことが条件。
+      3. 各料理の材料には、${servings}人分の具体的な分量（g数や個数）を明記すること。
 
-      【使用可能な在庫食材】
+      【作り方の記述ルール（重要）】
+      - 初心者でも迷わないよう、極めて具体的に書いてください。
+      - 「適当に炒める」はNG。「中火で3分、豚肉の色が変わるまで炒める」のように書くこと。
+      - 火加減（弱火・中火・強火）を必ず指定すること。
+      - 「とろみがつくまで」「香りが立つまで」など、状態の目安を書くこと。
+
+      【在庫食材】
       ${ingredients.join(', ')}
       ${includeRice ? '(＋白ご飯)' : ''}
 
-      【使用可能な在庫調味料】
+      【在庫調味料】
       ${seasoning}
 
       【構成】
-      - 1セットあたり${dishCount}品（${includeRice ? 'ご飯に合うおかず中心' : 'おかずのみ'}）
-      - 栄養バランスと味のバランスを考慮すること。
+      - 1セットあたり${dishCount}品
+      - 栄養と味のバランスを考慮。
 
-      【出力フォーマット(JSON)】
-      必ず以下のJSON形式のリストで出力してください。余計な文章は不要です。
-      
+      【出力JSON】
       [
         {
-          "menu_title": "献立名（例：豚肉とキャベツの味噌炒め定食）",
+          "menu_title": "献立名",
           "nutrition_point": "栄養解説",
           "total_calories": 750,
           "dishes": [
@@ -45,8 +47,8 @@ export async function POST(req: Request) {
               "title": "料理名",
               "type": "主菜/副菜/汁物",
               "difficulty": "簡単",
-              "ingredients": ["豚肉 200g", "キャベツ 1/4個(300g)", "味噌 大さじ2"],
-              "steps": ["手順1", "手順2"]
+              "ingredients": ["豚肉 200g", "玉ねぎ 1個"],
+              "steps": ["フライパンに油(大さじ1)をひき、中火で熱する。", "豚肉を入れ、色が変わるまで2分ほど炒める。"]
             }
           ]
         }
@@ -54,15 +56,11 @@ export async function POST(req: Request) {
     `;
 
     const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-    
     const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
-    
+    const text = result.response.text();
     const jsonStr = text.match(/\[[\s\S]*\]/)?.[0] || "[]";
-    const data = JSON.parse(jsonStr);
-
-    return NextResponse.json(data);
+    
+    return NextResponse.json(JSON.parse(jsonStr));
 
   } catch (error: any) {
     console.error("Menu Error:", error);
