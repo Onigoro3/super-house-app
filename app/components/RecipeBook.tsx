@@ -4,7 +4,37 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 
 type Recipe = { id: number; title: string; url: string; ingredients: string[]; steps: string[]; };
-type StockItem = { id: number; name: string; quantity: string; status: 'ok' | 'buy'; };
+type StockItem = { id: number; name: string; quantity: string; status: 'ok' | 'buy'; category: string; };
+
+// ★追加：言葉のゆらぎ変換リスト（辞書）
+// 在庫にある名前（キー）に対して、レシピに出てきそうな別名（値）を登録
+const SYNONYM_MAP: Record<string, string[]> = {
+  "卵": ["たまご", "玉子", "エッグ"],
+  "たまご": ["卵", "玉子"],
+  "鶏肉": ["とり肉", "鶏", "チキン", "鶏もも", "鶏むね", "ささみ"],
+  "鶏もも肉": ["鶏肉", "とり肉", "鶏もも"],
+  "豚肉": ["ぶた肉", "豚", "ポーク", "豚バラ", "豚こま", "豚ロース"],
+  "牛肉": ["ぎゅう肉", "牛", "ビーフ"],
+  "挽き肉": ["ひき肉", "ミンチ", "合い挽き"],
+  "玉ねぎ": ["たまねぎ", "タマネギ", "オニオン"],
+  "人参": ["にんじん", "ニンジン"],
+  "じゃがいも": ["ジャガイモ", "ポテト", "馬鈴薯"],
+  "葱": ["ねぎ", "ネギ", "長ネギ", "万能ねぎ"],
+  "生姜": ["しょうが", "ショウガ"],
+  "大蒜": ["にんにく", "ニンニク", "ガーリック"],
+  "醤油": ["しょうゆ", "ショウユ", "正油"],
+  "しょうゆ": ["醤油", "正油"],
+  "砂糖": ["さとう", "サトウ", "シュガー", "三温糖", "上白糖"],
+  "塩": ["しお", "ソルト", "岩塩"],
+  "胡椒": ["こしょう", "コショウ", "ペッパー"],
+  "酒": ["料理酒", "日本酒"],
+  "みりん": ["味醂", "本みりん"],
+  "油": ["サラダ油", "キャノーラ油", "オリーブオイル", "ごま油"],
+  "マヨネーズ": ["マヨ"],
+  "ケチャップ": ["トマトケチャップ"],
+  "コンソメ": ["固形コンソメ", "顆粒コンソメ"],
+  "出汁": ["だし", "ダシ", "ほんだし"],
+};
 
 export default function RecipeBook() {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
@@ -46,23 +76,41 @@ export default function RecipeBook() {
     setEditingTitleId(null);
   };
 
-  // ★ 強化版：在庫照合ロジック
+  // ★ 超・強化版：在庫照合ロジック
   const findStockMatch = (ingredientText: string) => {
-    // 文字列を正規化する関数（カタカナをひらがなに、スペース削除）
+    // 1. 文字列を正規化（カタカナ→ひらがな、スペース削除）
     const normalize = (str: string) => str.replace(/[\u30a1-\u30f6]/g, m => String.fromCharCode(m.charCodeAt(0) - 0x60)).replace(/\s+/g, '');
-    
     const target = normalize(ingredientText);
 
     return stockItems.find(stock => {
+      // 在庫切れのものは無視
       if (stock.status !== 'ok') return false;
-      const stockName = normalize(stock.name);
+
+      const stockNameRaw = stock.name;
+      const stockNameNorm = normalize(stockNameRaw);
+
+      // A. 完全一致・包含チェック（基本）
+      if (stockNameNorm.length > 1 && target.includes(stockNameNorm)) return true;
+      if (target.length > 1 && stockNameNorm.includes(target)) return true;
+
+      // B. 辞書チェック（応用）
+      // 在庫名が辞書のキーにある場合（例: 在庫が「しょうゆ」）
+      if (SYNONYM_MAP[stockNameRaw]) {
+        // 辞書のリスト（["醤油", "正油"]）のどれかが、レシピの材料に含まれていればOK
+        if (SYNONYM_MAP[stockNameRaw].some(synonym => target.includes(normalize(synonym)))) return true;
+      }
       
-      // 双方向チェック: 「鶏肉もも」vs「鶏もも肉」のようなケース用
-      // どちらかがどちらかを含んでいればOKとする
-      // ただし短すぎる単語（2文字以下）の誤爆を防ぐため、ある程度の長さがある場合のみ
-      if (stockName.length > 1 && target.includes(stockName)) return true;
-      if (target.length > 1 && stockName.includes(target)) return true;
-      
+      // 在庫名が辞書の「値」のどれかと一致する場合（例: 在庫が「醤油」で、キーが「しょうゆ」）
+      // 逆引き検索
+      for (const [key, synonyms] of Object.entries(SYNONYM_MAP)) {
+        // もし在庫名が類語リストのどれかと一致したら
+        if (normalize(key) === stockNameNorm || synonyms.some(s => normalize(s) === stockNameNorm)) {
+          // そのキー（代表名）や他の類語がレシピに含まれているかチェック
+          if (target.includes(normalize(key))) return true;
+          if (synonyms.some(s => target.includes(normalize(s)))) return true;
+        }
+      }
+
       return false;
     });
   };
@@ -81,7 +129,7 @@ export default function RecipeBook() {
         const name = match ? match[1].trim() : raw;
         const qty = match ? match[2].trim() : '';
 
-        // 既存チェックも強化版ロジックを使う
+        // 既存チェック（ここでも正規化を使用）
         const normalize = (str: string) => str.replace(/[\u30a1-\u30f6]/g, m => String.fromCharCode(m.charCodeAt(0) - 0x60)).replace(/\s+/g, '');
         const normName = normalize(name);
         
@@ -93,7 +141,12 @@ export default function RecipeBook() {
         if (existing) {
           await supabase.from('items').update({ quantity: qty || existing.quantity, status: 'ok' }).eq('id', existing.id);
         } else {
-          await supabase.from('items').insert([{ name, quantity: qty, category: 'food', status: 'ok' }]);
+          // カテゴリ自動判定（簡易版）
+          let category = 'food';
+          if (name.includes('醤油') || name.includes('油') || name.includes('塩') || name.includes('ソース')) category = 'seasoning';
+          if (name.includes('ペーパー') || name.includes('洗剤')) category = 'other';
+
+          await supabase.from('items').insert([{ name, quantity: qty, category, status: 'ok' }]);
         }
       }
       alert("在庫に追加しました！");
