@@ -24,14 +24,21 @@ export default function RecipeBook() {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [stockItems, setStockItems] = useState<StockItem[]>([]);
   const [checkedItems, setCheckedItems] = useState<Record<number, Record<number, boolean>>>({});
-  const [editingTitleId, setEditingTitleId] = useState<number | null>(null);
-  const [editTitleText, setEditTitleText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   
-  // ★追加：フォルダの開閉状態
+  // UI制御用ステート
   const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
-  // ★追加：レシピ詳細の開閉状態（IDで管理）
   const [openRecipeId, setOpenRecipeId] = useState<number | null>(null);
+  
+  // 編集用ステート
+  const [editingTitleId, setEditingTitleId] = useState<number | null>(null);
+  const [editTitleText, setEditTitleText] = useState('');
+  
+  const [editingFolder, setEditingFolder] = useState<string | null>(null);
+  const [editFolderText, setEditFolderText] = useState('');
+
+  const [movingRecipeId, setMovingRecipeId] = useState<number | null>(null);
+  const [newFolderText, setNewFolderText] = useState('');
 
   const fetchData = async () => {
     const { data: r } = await supabase.from('recipes').select('*').order('created_at', { ascending: false });
@@ -46,7 +53,10 @@ export default function RecipeBook() {
     if (saved) setCheckedItems(JSON.parse(saved));
   }, []);
 
-  // チャンネルごとにグループ化する関数
+  // チャンネル一覧を取得（重複なし）
+  const channels = Array.from(new Set(recipes.map(r => r.channel_name || 'その他')));
+
+  // グループ化
   const groupedRecipes = recipes.reduce((acc, recipe) => {
     const channel = recipe.channel_name || 'その他';
     if (!acc[channel]) acc[channel] = [];
@@ -54,14 +64,40 @@ export default function RecipeBook() {
     return acc;
   }, {} as Record<string, Recipe[]>);
 
-  const toggleFolder = (channel: string) => {
-    setOpenFolders(prev => ({ ...prev, [channel]: !prev[channel] }));
+  // --- 操作ロジック ---
+
+  // フォルダ名変更
+  const startEditFolder = (channel: string) => {
+    setEditingFolder(channel);
+    setEditFolderText(channel);
+  };
+  const saveFolder = async (oldName: string) => {
+    if (!editFolderText.trim()) return;
+    await supabase.from('recipes').update({ channel_name: editFolderText }).eq('channel_name', oldName);
+    fetchData();
+    setEditingFolder(null);
   };
 
-  // 以下、既存ロジック（削除、チェック、保存、照合、買い物完了）
+  // レシピ移動
+  const moveRecipe = async (id: number, newChannel: string) => {
+    if (!newChannel.trim()) return;
+    await supabase.from('recipes').update({ channel_name: newChannel }).eq('id', id);
+    fetchData();
+    setMovingRecipeId(null);
+    setNewFolderText('');
+  };
+
+  // タイトル変更
+  const saveTitle = async (id: number) => {
+    await supabase.from('recipes').update({ title: editTitleText }).eq('id', id);
+    setRecipes(recipes.map(r => r.id === id ? { ...r, title: editTitleText } : r));
+    setEditingTitleId(null);
+  };
+
+  // その他（削除、チェック、在庫照合、買い物完了）
   const deleteRecipe = async (id: number) => { if (!confirm('削除しますか？')) return; await supabase.from('recipes').delete().eq('id', id); fetchData(); };
   const toggleCheck = (rid: number, idx: number) => { const next = { ...checkedItems, [rid]: { ...checkedItems[rid], [idx]: !checkedItems[rid]?.[idx] } }; setCheckedItems(next); localStorage.setItem('recipe_checks', JSON.stringify(next)); };
-  const saveTitle = async (id: number) => { await supabase.from('recipes').update({ title: editTitleText }).eq('id', id); setRecipes(recipes.map(r => r.id === id ? { ...r, title: editTitleText } : r)); setEditingTitleId(null); };
+  
   const findStockMatch = (ingredientText: string) => {
     const normalize = (str: string) => str.replace(/[\u30a1-\u30f6]/g, m => String.fromCharCode(m.charCodeAt(0) - 0x60)).replace(/\s+/g, '');
     const target = normalize(ingredientText);
@@ -79,7 +115,8 @@ export default function RecipeBook() {
       return false;
     });
   };
-  const completeShopping = async (recipe: Recipe) => { /* 省略（以前と同じ）*/ 
+
+  const completeShopping = async (recipe: Recipe) => { 
     const checks = checkedItems[recipe.id] || {}; const indices = Object.keys(checks).filter(k => checks[Number(k)]).map(Number);
     if (indices.length === 0) return alert("購入したものにチェックを！"); if (!confirm(`${indices.length}個を在庫に追加しますか？`)) return;
     setIsProcessing(true);
@@ -96,33 +133,43 @@ export default function RecipeBook() {
     } catch (e) { alert("エラー"); } finally { setIsProcessing(false); }
   };
 
+  const toggleFolder = (channel: string) => setOpenFolders(prev => ({ ...prev, [channel]: !prev[channel] }));
+
   return (
     <div className="p-4 space-y-8 pb-24">
       <div className="bg-indigo-50 p-6 rounded-xl border-2 border-indigo-100 text-center">
         <h2 className="text-2xl font-bold text-indigo-800">📖 マイ・レシピ帳</h2>
-        <p className="text-sm text-gray-500">チャンネルごとに整理されています</p>
+        <p className="text-sm text-gray-500">フォルダ編集・レシピ移動・全材料表示に対応</p>
       </div>
 
       <div className="space-y-6">
         {recipes.length === 0 && <p className="text-center text-gray-400">レシピがありません</p>}
         
-        {/* チャンネルごとのループ */}
         {Object.entries(groupedRecipes).map(([channel, channelRecipes]) => (
           <div key={channel} className="border rounded-2xl overflow-hidden shadow-sm bg-white">
-            {/* チャンネルヘッダー（クリックで開閉） */}
-            <button 
-              onClick={() => toggleFolder(channel)}
-              className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 transition"
-            >
-              <div className="flex items-center gap-3">
-                <span className="text-2xl">📺</span>
-                <h3 className="font-bold text-lg text-gray-800">{channel}</h3>
-                <span className="bg-indigo-100 text-indigo-700 text-xs px-2 py-1 rounded-full">{channelRecipes.length}</span>
+            {/* フォルダヘッダー */}
+            <div className="w-full flex items-center justify-between p-4 bg-gray-50 border-b">
+              <div className="flex items-center gap-3 flex-1">
+                <button onClick={() => toggleFolder(channel)} className="text-2xl">📺</button>
+                
+                {/* フォルダ名編集 */}
+                {editingFolder === channel ? (
+                  <div className="flex gap-2 flex-1">
+                    <input value={editFolderText} onChange={e => setEditFolderText(e.target.value)} className="border p-1 rounded w-full text-black" autoFocus onClick={e => e.stopPropagation()} />
+                    <button onClick={() => saveFolder(channel)} className="bg-blue-600 text-white px-2 py-1 rounded text-xs whitespace-nowrap">保存</button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 flex-1 cursor-pointer" onClick={() => toggleFolder(channel)}>
+                    <h3 className="font-bold text-lg text-gray-800">{channel}</h3>
+                    <button onClick={(e) => { e.stopPropagation(); startEditFolder(channel); }} className="text-gray-400 hover:text-blue-500 text-xs">✏️</button>
+                    <span className="bg-indigo-100 text-indigo-700 text-xs px-2 py-1 rounded-full">{channelRecipes.length}</span>
+                  </div>
+                )}
               </div>
-              <span className={`text-2xl text-gray-400 transition-transform ${openFolders[channel] ? 'rotate-180' : ''}`}>▼</span>
-            </button>
+              <button onClick={() => toggleFolder(channel)} className={`text-gray-400 text-2xl transition ${openFolders[channel] ? 'rotate-180' : ''}`}>▼</button>
+            </div>
 
-            {/* レシピリスト（グリッド表示） */}
+            {/* レシピ一覧 */}
             {openFolders[channel] && (
               <div className="p-4 bg-white grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 animate-fadeIn">
                 {channelRecipes.map((recipe) => {
@@ -133,37 +180,75 @@ export default function RecipeBook() {
 
                   return (
                     <div key={recipe.id} className={`border rounded-xl transition-all duration-300 ${isOpen ? 'col-span-1 md:col-span-2 lg:col-span-3 shadow-lg ring-2 ring-indigo-100' : 'hover:shadow-md'}`}>
-                      {/* レシピタイトル */}
-                      <div className="p-4 flex justify-between items-start cursor-pointer" onClick={() => setOpenRecipeId(isOpen ? null : recipe.id)}>
-                        <h4 className="font-bold text-gray-800 flex-1">{recipe.title}</h4>
-                        <span className="text-gray-400 text-xl ml-2">{isOpen ? '▲' : '▼'}</span>
+                      
+                      {/* レシピヘッダー */}
+                      <div className="p-4 border-b flex justify-between items-start bg-white rounded-t-xl">
+                        <div className="flex-1 mr-2">
+                          {editingTitleId === recipe.id ? (
+                            <div className="flex gap-2">
+                              <input value={editTitleText} onChange={e => setEditTitleText(e.target.value)} className="border p-1 w-full text-black" autoFocus />
+                              <button onClick={() => saveTitle(recipe.id)} className="bg-blue-600 text-white px-2 rounded text-xs">保存</button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <h4 onClick={() => setOpenRecipeId(isOpen ? null : recipe.id)} className="font-bold text-gray-800 cursor-pointer">{recipe.title}</h4>
+                              <button onClick={() => { setEditingTitleId(recipe.id); setEditTitleText(recipe.title); }} className="text-gray-300 hover:text-blue-500 text-xs">✏️</button>
+                            </div>
+                          )}
+                        </div>
+                        
+                        {/* フォルダ移動メニュー */}
+                        <div className="relative">
+                          <button onClick={() => setMovingRecipeId(movingRecipeId === recipe.id ? null : recipe.id)} className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded hover:bg-gray-200">📂 移動</button>
+                          {movingRecipeId === recipe.id && (
+                            <div className="absolute right-0 top-8 bg-white border shadow-xl rounded-lg p-2 z-10 w-48">
+                              <p className="text-xs text-gray-400 mb-1">移動先フォルダを選択:</p>
+                              {channels.map(c => (
+                                <button key={c} onClick={() => moveRecipe(recipe.id, c)} className="block w-full text-left text-sm p-1 hover:bg-indigo-50 rounded">{c}</button>
+                              ))}
+                              <div className="border-t my-1"></div>
+                              <input placeholder="新しいフォルダ名" value={newFolderText} onChange={e => setNewFolderText(e.target.value)} className="w-full border p-1 text-xs text-black mb-1" />
+                              <button onClick={() => moveRecipe(recipe.id, newFolderText)} className="w-full bg-blue-600 text-white text-xs py-1 rounded">新規作成して移動</button>
+                            </div>
+                          )}
+                        </div>
                       </div>
 
                       {/* 詳細エリア */}
                       {isOpen && (
-                        <div className="p-4 border-t bg-gray-50 text-sm">
+                        <div className="p-4 bg-gray-50 text-sm">
                           <div className="flex gap-2 mb-4">
                             <a href={recipe.url} target="_blank" className="flex-1 bg-red-600 text-white text-center py-2 rounded font-bold hover:bg-red-700">📺 動画</a>
                             <button onClick={() => deleteRecipe(recipe.id)} className="px-3 bg-gray-200 rounded font-bold">🗑️</button>
                           </div>
                           
-                          <div className="grid md:grid-cols-2 gap-4">
-                            {/* 買い物リスト */}
-                            <div className="bg-white p-3 rounded border border-green-200">
-                              <h5 className="font-bold text-green-700 mb-2">🛒 買い物リスト</h5>
-                              {toBuy.length === 0 ? <p className="text-xs text-gray-400">すべて在庫にあります！</p> : toBuy.map((item) => (
-                                <label key={item.index} className={`flex gap-2 p-1 cursor-pointer ${checkedItems[recipe.id]?.[item.index] ? 'opacity-50 line-through' : ''}`}>
-                                  <input type="checkbox" checked={!!checkedItems[recipe.id]?.[item.index]} onChange={() => toggleCheck(recipe.id, item.index)} className="accent-green-600" />
-                                  <span>{item.text}</span>
-                                </label>
-                              ))}
-                              {checkedCount > 0 && <button onClick={() => completeShopping(recipe)} disabled={isProcessing} className="w-full mt-2 bg-green-600 text-white py-1 rounded text-xs font-bold">{isProcessing ? '...' : '在庫に追加'}</button>}
+                          <div className="grid md:grid-cols-2 gap-6">
+                            <div>
+                              {/* 全材料リスト（常時表示） */}
+                              <div className="mb-4 bg-white p-3 rounded border border-gray-300">
+                                <h5 className="font-bold text-gray-700 mb-2 border-l-4 border-gray-500 pl-2">📝 全材料リスト</h5>
+                                <ul className="list-disc pl-5 text-gray-700 space-y-1">
+                                  {recipe.ingredients.map((ing, i) => <li key={i}>{ing}</li>)}
+                                </ul>
+                              </div>
+
+                              {/* 買い物リスト */}
+                              <div className="bg-white p-3 rounded border border-green-200">
+                                <h5 className="font-bold text-green-700 mb-2 flex items-center gap-2">🛒 買い物リスト <span className="text-xs font-normal text-gray-400">(在庫なしのみ)</span></h5>
+                                {toBuy.length === 0 ? <p className="text-xs text-gray-400">すべて在庫にあります！</p> : toBuy.map((item) => (
+                                  <label key={item.index} className={`flex gap-2 p-1 cursor-pointer hover:bg-green-50 rounded ${checkedItems[recipe.id]?.[item.index] ? 'opacity-50 line-through' : ''}`}>
+                                    <input type="checkbox" checked={!!checkedItems[recipe.id]?.[item.index]} onChange={() => toggleCheck(recipe.id, item.index)} className="accent-green-600" />
+                                    <span className="font-bold">{item.text}</span>
+                                  </label>
+                                ))}
+                                {checkedCount > 0 && <button onClick={() => completeShopping(recipe)} disabled={isProcessing} className="w-full mt-2 bg-green-600 text-white py-2 rounded text-xs font-bold">{isProcessing ? '...' : `🛍️ ${checkedCount}個を在庫に追加`}</button>}
+                              </div>
                             </div>
                             
                             {/* 作り方 */}
                             <div>
-                              <h5 className="font-bold text-orange-600 mb-2">🔥 作り方</h5>
-                              <ol className="list-decimal pl-5 space-y-1 text-gray-700">{recipe.steps.map((s, i) => <li key={i}>{s}</li>)}</ol>
+                              <h5 className="font-bold text-orange-600 mb-2 border-l-4 border-orange-500 pl-2">🔥 作り方</h5>
+                              <ol className="list-decimal pl-5 space-y-2 text-gray-700">{recipe.steps.map((s, i) => <li key={i} className="leading-relaxed">{s}</li>)}</ol>
                             </div>
                           </div>
                         </div>
