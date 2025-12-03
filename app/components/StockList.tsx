@@ -6,57 +6,35 @@ import { supabase } from '@/lib/supabase';
 type Category = 'food' | 'seasoning' | 'other';
 type Status = 'ok' | 'buy';
 type ViewType = 'food' | 'seasoning' | 'other' | 'menu';
-
-type Item = {
-  id: number;
-  name: string;
-  quantity: string;
-  category: Category;
-  status: Status;
-};
-
-type Recipe = {
-  title: string;
-  type: string;
-  difficulty: '簡単' | '普通' | '難しい';
-  calories: number;
-  ingredients: string[];
-  steps: string[];
-};
+type Item = { id: number; name: string; quantity: string; category: Category; status: Status; };
+type Recipe = { title: string; type: string; difficulty: string; calories: number; ingredients: string[]; steps: string[]; };
 
 export default function StockList({ view }: { view: ViewType }) {
   const [items, setItems] = useState<Item[]>([]);
-  
-  // 入力・編集用
   const [newItemName, setNewItemName] = useState('');
   const [newItemQuantity, setNewItemQuantity] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState('');
   const [editQuantity, setEditQuantity] = useState('');
   
-  // 献立用
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [useQuantities, setUseQuantities] = useState<Record<number, string>>({});
-  // 白ご飯フラグ
   const [includeRice, setIncludeRice] = useState(false);
-  
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // データ読み込み
   const fetchItems = async () => {
-    const { data, error } = await supabase.from('items').select('*').order('created_at', { ascending: true });
-    if (!error) setItems(data || []);
+    const { data } = await supabase.from('items').select('*').order('created_at', { ascending: true });
+    if (data) setItems(data);
   };
   useEffect(() => { fetchItems(); }, []);
 
-  // アイテム操作系
   const addItem = async () => {
     if (!newItemName) return;
     const category: Category = view === 'menu' ? 'food' : (view as Category);
-    const { error } = await supabase.from('items').insert([{ name: newItemName, quantity: newItemQuantity, category, status: 'ok' }]);
-    if (!error) { setNewItemName(''); setNewItemQuantity(''); fetchItems(); }
+    await supabase.from('items').insert([{ name: newItemName, quantity: newItemQuantity, category, status: 'ok' }]);
+    setNewItemName(''); setNewItemQuantity(''); fetchItems();
   };
   const startEditing = (item: Item) => { setEditingId(item.id); setEditName(item.name); setEditQuantity(item.quantity || ''); };
   const saveEdit = async () => {
@@ -75,186 +53,127 @@ export default function StockList({ view }: { view: ViewType }) {
     setSelectedIds(selectedIds.filter(sid => sid !== id));
     await supabase.from('items').delete().eq('id', id);
   };
-
   const toggleSelection = (id: number) => {
     if (selectedIds.includes(id)) {
       setSelectedIds(selectedIds.filter(sid => sid !== id));
-      const newQuantities = { ...useQuantities };
-      delete newQuantities[id];
-      setUseQuantities(newQuantities);
+      const next = { ...useQuantities }; delete next[id]; setUseQuantities(next);
     } else {
       setSelectedIds([...selectedIds, id]);
     }
   };
-
   const handleQuantityChange = (id: number, val: string) => {
     setUseQuantities({ ...useQuantities, [id]: val });
     if (!selectedIds.includes(id) && val !== '') setSelectedIds([...selectedIds, id]);
   };
 
-  // ★ AI献立生成ロジック
   const generateMenu = async () => {
     const selectedFoods = items.filter(i => selectedIds.includes(i.id) && i.category === 'food');
     if (selectedFoods.length === 0) { alert("食材を選んでください！"); return; }
-
-    setLoading(true);
-    setRecipes([]);
-    setExpandedIndex(null);
+    setLoading(true); setRecipes([]); setExpandedIndex(null);
 
     const ingredientsToSend = selectedFoods.map(f => {
       const qty = useQuantities[f.id] || f.quantity || '';
       return qty ? `${f.name}(${qty})` : f.name;
     });
-
-    const availableSeasonings = items
-      .filter(i => i.category === 'seasoning' && i.status === 'ok')
-      .map(i => i.name)
-      .join('、');
+    const availableSeasonings = items.filter(i => i.category === 'seasoning' && i.status === 'ok').map(i => i.name).join('、');
 
     try {
       const res = await fetch('/api/menu', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          ingredients: ingredientsToSend,
-          seasoning: availableSeasonings || '一般的な調味料',
-          includeRice: includeRice
-        }),
+        body: JSON.stringify({ ingredients: ingredientsToSend, seasoning: availableSeasonings || '基本調味料', includeRice }),
       });
-
-      if (!res.ok) throw new Error('生成エラー');
+      if (!res.ok) throw new Error('Error');
       const data = await res.json();
       setRecipes(data);
-    } catch (e) {
-      alert('AIが混み合っているか、エラーが発生しました。もう一度お試しください。');
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { alert('生成エラー'); } finally { setLoading(false); }
   };
 
-  // ★★★ 献立・レシピ画面 ★★★
   if (view === 'menu') {
     const foodStock = items.filter(i => i.category === 'food' && i.status === 'ok');
+    // 選択中のアイテムを取得
+    const selectedItemsList = items.filter(i => selectedIds.includes(i.id));
 
     return (
       <div className="p-4 space-y-8 pb-24">
-        
         <div className="bg-white p-5 rounded-xl border shadow-sm">
-          <h3 className="font-bold text-gray-700 border-b pb-2 mb-3">① 食材と量を選ぶ</h3>
+          {/* ★追加：選択中リスト表示 */}
+          {selectedIds.length > 0 && (
+            <div className="mb-4 bg-indigo-50 p-3 rounded-lg border border-indigo-100">
+              <p className="text-xs font-bold text-indigo-600 mb-2">👇 現在選択中の食材 ({selectedIds.length})</p>
+              <div className="flex flex-wrap gap-2">
+                {selectedItemsList.map(item => (
+                  <span key={item.id} className="bg-white text-indigo-700 px-3 py-1 rounded-full text-sm shadow-sm border border-indigo-200 flex items-center gap-1">
+                    {item.name}
+                    <button onClick={() => toggleSelection(item.id)} className="text-indigo-400 hover:text-red-500 font-bold ml-1">×</button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <h3 className="font-bold text-gray-700 border-b pb-2 mb-3">① 食材を選ぶ</h3>
           <div className="max-h-60 overflow-y-auto space-y-2 mb-4">
-            {foodStock.length === 0 ? (
-              <p className="text-sm text-gray-400">食材の在庫がありません。</p>
-            ) : (
-              foodStock.map(item => (
-                <div key={item.id} className="flex items-center gap-2 p-2 rounded hover:bg-gray-50 border border-transparent hover:border-gray-200">
-                  <input 
-                    type="checkbox" 
-                    checked={selectedIds.includes(item.id)} 
-                    onChange={() => toggleSelection(item.id)}
-                    className="w-5 h-5 accent-indigo-600 flex-shrink-0"
-                  />
-                  <div className="flex-1">
-                    <div className="font-bold text-gray-800">{item.name}</div>
-                    <div className="text-xs text-gray-400">在庫: {item.quantity || '未設定'}</div>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="使う量"
-                    value={useQuantities[item.id] || ''}
-                    onChange={(e) => handleQuantityChange(item.id, e.target.value)}
-                    className="border p-1 rounded text-sm w-24 text-right text-black bg-gray-50 focus:bg-white"
-                  />
+            {foodStock.length === 0 ? <p className="text-sm text-gray-400">在庫なし</p> : foodStock.map(item => (
+              <div key={item.id} className="flex items-center gap-2 p-2 rounded hover:bg-gray-50 border border-transparent hover:border-gray-200">
+                <input type="checkbox" checked={selectedIds.includes(item.id)} onChange={() => toggleSelection(item.id)} className="w-5 h-5 accent-indigo-600 flex-shrink-0" />
+                <div className="flex-1">
+                  <div className="font-bold text-gray-800">{item.name}</div>
+                  <div className="text-xs text-gray-400">在庫: {item.quantity || '-'}</div>
                 </div>
-              ))
-            )}
+                <input type="text" placeholder="使う量" value={useQuantities[item.id] || ''} onChange={(e) => handleQuantityChange(item.id, e.target.value)} className="border p-1 rounded text-sm w-24 text-right text-black bg-gray-50" />
+              </div>
+            ))}
           </div>
 
-          {/* 白ご飯チェックボックス */}
           <div className="mb-4 bg-orange-50 p-3 rounded-lg border border-orange-100">
             <label className="flex items-center gap-3 cursor-pointer">
-              <input 
-                type="checkbox" 
-                checked={includeRice} 
-                onChange={() => setIncludeRice(!includeRice)}
-                className="w-5 h-5 accent-orange-500"
-              />
+              <input type="checkbox" checked={includeRice} onChange={() => setIncludeRice(!includeRice)} className="w-5 h-5 accent-orange-500" />
               <span className="text-gray-800 font-bold">🍚 白ご飯も使いますか？</span>
             </label>
-            <p className="text-xs text-gray-500 mt-1 pl-8">チェックすると、チャーハンや丼ものなども提案します</p>
           </div>
 
-          <button 
-            onClick={generateMenu} 
-            disabled={selectedIds.length === 0 || loading}
-            className={`w-full py-3 rounded-lg font-bold text-white shadow transition flex justify-center items-center gap-2 ${
-              loading ? 'bg-indigo-400 cursor-wait' : 
-              selectedIds.length === 0 ? 'bg-gray-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'
-            }`}
-          >
-            {loading ? (
-              <>
-                <span className="animate-spin text-xl">⏳</span>
-                <span>AIシェフが10個のレシピを考案中...</span>
-              </>
-            ) : (
-              selectedIds.length === 0 ? '食材を選んでください' : `✨ ${selectedIds.length}個の食材で10案考える！`
-            )}
+          <button onClick={generateMenu} disabled={selectedIds.length === 0 || loading} className={`w-full py-3 rounded-lg font-bold text-white shadow ${loading ? 'bg-indigo-400' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
+            {loading ? 'AIが考案中...' : `✨ ${selectedIds.length}個の食材で10案考える！`}
           </button>
         </div>
 
-        {/* レシピ提案 */}
         {recipes.length > 0 && (
           <div className="space-y-4">
-            <h3 className="font-bold text-gray-700 px-2">② AIシェフの提案メニュー (10選)</h3>
-            
-            {recipes.map((recipe, index) => {
-              const isOpen = expandedIndex === index;
-              const stars = recipe.difficulty === '簡単' ? '★' : recipe.difficulty === '普通' ? '★★' : '★★★';
-              const difficultyColor = recipe.difficulty === '簡単' ? 'text-green-600' : recipe.difficulty === '普通' ? 'text-orange-500' : 'text-red-600';
-
-              return (
-                <div key={index} className="bg-white border rounded-xl shadow-sm overflow-hidden transition-all duration-300">
-                  <button 
-                    onClick={() => setExpandedIndex(isOpen ? null : index)}
-                    className="w-full text-left p-4 flex justify-between items-center hover:bg-gray-50"
-                  >
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-1">
-                        <span className="text-xs font-bold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">{recipe.type}</span>
-                        <span className={`text-xs font-bold ${difficultyColor}`}>{stars} {recipe.difficulty}</span>
-                        <span className="text-xs font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded">約{recipe.calories}kcal</span>
-                      </div>
-                      <h4 className="font-bold text-lg text-gray-800">{recipe.title}</h4>
+            <h3 className="font-bold text-gray-700 px-2">② AIシェフの提案 (10選)</h3>
+            {recipes.map((recipe, index) => (
+              <div key={index} className="bg-white border rounded-xl shadow-sm overflow-hidden">
+                <button onClick={() => setExpandedIndex(expandedIndex === index ? null : index)} className="w-full text-left p-4 flex justify-between items-center hover:bg-gray-50">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-3 mb-1">
+                      <span className="text-xs font-bold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">{recipe.type}</span>
+                      <span className={`text-xs font-bold ${recipe.difficulty === '簡単' ? 'text-green-600' : 'text-orange-500'}`}>{recipe.difficulty}</span>
+                      <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">{recipe.calories}kcal</span>
                     </div>
-                    <span className={`text-2xl text-gray-400 ml-2 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`}>▼</span>
-                  </button>
-
-                  {isOpen && (
-                    <div className="p-5 border-t bg-gray-50 text-sm animate-fadeIn">
-                      <div className="mb-4">
-                        <h5 className="font-bold text-gray-700 mb-2 border-l-4 border-green-500 pl-2">🥬 材料</h5>
-                        <ul className="list-disc pl-5 text-gray-700 space-y-1">
-                          {recipe.ingredients.map((ing, i) => <li key={i}>{ing}</li>)}
-                        </ul>
-                      </div>
-                      <div>
-                        <h5 className="font-bold text-gray-700 mb-2 border-l-4 border-orange-500 pl-2">🔥 作り方</h5>
-                        <ol className="list-decimal pl-5 text-gray-700 space-y-3">
-                          {recipe.steps.map((step, i) => <li key={i} className="leading-relaxed">{step}</li>)}
-                        </ol>
-                      </div>
+                    <h4 className="font-bold text-lg text-gray-800">{recipe.title}</h4>
+                  </div>
+                  <span className={`text-2xl text-gray-400 transition ${expandedIndex === index ? 'rotate-180' : ''}`}>▼</span>
+                </button>
+                {expandedIndex === index && (
+                  <div className="p-5 border-t bg-gray-50 text-sm animate-fadeIn">
+                    <div className="mb-4">
+                      <h5 className="font-bold text-gray-700 mb-2 border-l-4 border-green-500 pl-2">🥬 材料</h5>
+                      <ul className="list-disc pl-5 text-gray-700">{recipe.ingredients.map((ing, i) => <li key={i}>{ing}</li>)}</ul>
                     </div>
-                  )}
-                </div>
-              );
-            })}
+                    <div>
+                      <h5 className="font-bold text-gray-700 mb-2 border-l-4 border-orange-500 pl-2">🔥 作り方</h5>
+                      <ol className="list-decimal pl-5 text-gray-700 space-y-2">{recipe.steps.map((step, i) => <li key={i}>{step}</li>)}</ol>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         )}
       </div>
     );
   }
 
-  // ★★★ 在庫リスト画面 ★★★
   const categoryMap: Record<string, Category> = { food: 'food', seasoning: 'seasoning', other: 'other' };
   const targetCategory = categoryMap[view];
   const displayItems = items.filter(i => i.category === targetCategory);
@@ -265,34 +184,20 @@ export default function StockList({ view }: { view: ViewType }) {
       <h2 className="text-xl font-bold text-gray-800 border-l-4 border-blue-500 pl-3">
         {view === 'food' ? '🍎 食材リスト' : view === 'seasoning' ? '🧂 調味料リスト' : '🧻 日用品リスト'}
       </h2>
-
       {shoppingList.length > 0 && (
         <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-200">
           <h3 className="font-bold text-yellow-800 mb-2">🛒 買うもの</h3>
-          <ul className="space-y-1">
-            {shoppingList.map(item => (
-              <li key={item.id} className="flex justify-between text-sm bg-white px-2 py-1 rounded">
-                <span>{item.name}</span><span className="text-gray-400">{item.quantity}</span>
-              </li>
-            ))}
-          </ul>
+          <ul className="space-y-1">{shoppingList.map(i => <li key={i.id} className="flex justify-between text-sm bg-white px-2 py-1 rounded"><span>{i.name}</span><span className="text-gray-400">{i.quantity}</span></li>)}</ul>
         </div>
       )}
-
       <div className="bg-white p-3 rounded-xl border shadow-sm flex gap-2">
         <input value={newItemName} onChange={e => setNewItemName(e.target.value)} placeholder="品名を追加" className="border p-2 rounded flex-1 text-black" />
         <input value={newItemQuantity} onChange={e => setNewItemQuantity(e.target.value)} placeholder="分量" className="border p-2 rounded w-20 text-black" />
         <button onClick={addItem} className="bg-blue-600 text-white px-4 rounded font-bold">＋</button>
       </div>
-
       <div className="space-y-2">
         {displayItems.map(item => (
-          <StockItem 
-            key={item.id} item={item} isEditing={editingId === item.id}
-            editName={editName} editQuantity={editQuantity} setEditName={setEditName} setEditQuantity={setEditQuantity}
-            onSave={saveEdit} onCancel={() => setEditingId(null)} onEditStart={() => startEditing(item)}
-            onToggleStatus={toggleStatus} onDelete={deleteItem}
-          />
+          <StockItem key={item.id} item={item} isEditing={editingId === item.id} editName={editName} editQuantity={editQuantity} setEditName={setEditName} setEditQuantity={setEditQuantity} onSave={saveEdit} onCancel={() => setEditingId(null)} onEditStart={() => startEditing(item)} onToggleStatus={toggleStatus} onDelete={deleteItem} />
         ))}
       </div>
     </div>
@@ -303,10 +208,9 @@ function StockItem({ item, isEditing, editName, editQuantity, setEditName, setEd
   if (isEditing) {
     return (
       <div className="bg-blue-50 p-2 rounded border border-blue-300 flex gap-2 items-center">
-        <input value={editName} onChange={e => setEditName(e.target.value)} className="border p-1 rounded w-full text-black" />
-        <input value={editQuantity} onChange={e => setEditQuantity(e.target.value)} className="border p-1 rounded w-20 text-black" />
+        <input value={editName} onChange={e => setEditName(e.target.value)} className="border p-1 w-full text-black" />
+        <input value={editQuantity} onChange={e => setEditQuantity(e.target.value)} className="border p-1 w-20 text-black" />
         <button onClick={onSave} className="bg-blue-500 text-white px-2 py-1 rounded text-xs">保存</button>
-        <button onClick={onCancel} className="bg-gray-300 text-black px-2 py-1 rounded text-xs">×</button>
       </div>
     );
   }
