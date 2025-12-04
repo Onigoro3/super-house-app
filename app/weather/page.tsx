@@ -4,18 +4,18 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 
-// ★RainRadarはブラウザ専用なのでdynamic importする (SSRエラー回避)
+// RainRadarはクライアント専用
 const RainRadar = dynamic(() => import('./RainRadar'), {
   ssr: false,
-  loading: () => <div className="h-full bg-gray-100 flex items-center justify-center text-gray-400">地図を読み込み中...</div>
+  loading: () => <div className="h-full bg-gray-100 flex items-center justify-center text-gray-400">レーダー読み込み中...</div>
 });
 
 type HourlyWeather = { time: string; max: number; min: number; code: number; label: string; };
 type DailyWeather = { dateStr: string; displayDate: string; weekday: string; maxTemp: number; minTemp: number; weatherCode: number; hourly: HourlyWeather[]; };
 
 export default function WeatherApp() {
-  // ビュー切り替え ('forecast' | 'radar')
-  const [currentView, setCurrentView] = useState<'forecast' | 'radar'>('forecast');
+  // ビュー切り替え ('forecast' | 'radar' | 'windy')
+  const [currentView, setCurrentView] = useState<'forecast' | 'radar' | 'windy'>('forecast');
 
   const [currentWeather, setCurrentWeather] = useState<any>(null);
   const [weeklyWeather, setWeeklyWeather] = useState<DailyWeather[]>([]);
@@ -24,19 +24,11 @@ export default function WeatherApp() {
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedDate, setExpandedDate] = useState<string | null>(null);
   
-  // ★地図用座標
-  const [mapLat, setMapLat] = useState(35.6895); // 東京デフォルト
+  const [mapLat, setMapLat] = useState(35.6895);
   const [mapLon, setMapLon] = useState(139.6917);
 
   const getWeatherIcon = (code: number) => {
-    if (code === 0) return '☀';
-    if (code <= 3) return '⛅';
-    if (code <= 48) return '🌫';
-    if (code <= 67) return '☔';
-    if (code <= 77) return '⛄';
-    if (code <= 82) return '☂';
-    if (code >= 95) return '⚡';
-    return '☁';
+    if (code === 0) return '☀'; if (code <= 3) return '⛅'; if (code <= 48) return '🌫'; if (code <= 67) return '☔'; if (code <= 77) return '⛄'; if (code <= 82) return '☂'; if (code >= 95) return '⚡'; return '☁';
   };
 
   const getWeatherLabel = (code: number) => {
@@ -52,7 +44,6 @@ export default function WeatherApp() {
   const fetchWeather = async (lat: number, lon: number, name: string) => {
     setLoading(true);
     setExpandedDate(null);
-    // 地図座標も更新
     setMapLat(lat);
     setMapLon(lon);
 
@@ -126,7 +117,7 @@ export default function WeatherApp() {
   return (
     <div className="min-h-screen bg-sky-100 flex flex-col md:flex-row text-gray-800 h-screen overflow-hidden">
       
-      {/* ★天気アプリ専用サイドバー */}
+      {/* サイドバー */}
       <div className="w-full md:w-64 bg-white md:h-full shadow-md flex flex-row md:flex-col shrink-0 z-20">
         <div className="p-4 bg-sky-500 text-white flex items-center gap-2 md:block">
           <Link href="/" className="text-sm bg-sky-600 px-2 py-1 rounded hover:bg-sky-700 mb-2 inline-block">🔙 ホーム</Link>
@@ -134,41 +125,31 @@ export default function WeatherApp() {
         </div>
         
         <div className="flex-1 flex md:flex-col p-2 gap-2 overflow-x-auto md:overflow-visible">
-          <button 
-            onClick={() => setCurrentView('forecast')}
-            className={`flex-1 md:flex-none text-left px-4 py-3 rounded-lg font-bold transition flex items-center gap-2 ${currentView === 'forecast' ? 'bg-sky-100 text-sky-700 ring-2 ring-sky-200' : 'hover:bg-gray-50 text-gray-600'}`}
-          >
-            <span className="text-xl">📅</span> 週間予報
-          </button>
-          <button 
-            onClick={() => setCurrentView('radar')}
-            className={`flex-1 md:flex-none text-left px-4 py-3 rounded-lg font-bold transition flex items-center gap-2 ${currentView === 'radar' ? 'bg-sky-100 text-sky-700 ring-2 ring-sky-200' : 'hover:bg-gray-50 text-gray-600'}`}
-          >
-            <span className="text-xl">☔</span> 雨雲レーダー
-          </button>
+          <button onClick={() => setCurrentView('forecast')} className={`flex-1 md:flex-none text-left px-4 py-3 rounded-lg font-bold transition flex items-center gap-2 ${currentView === 'forecast' ? 'bg-sky-100 text-sky-700 ring-2 ring-sky-200' : 'hover:bg-gray-50 text-gray-600'}`}><span className="text-xl">📅</span> <span className="whitespace-nowrap">週間予報</span></button>
+          <button onClick={() => setCurrentView('radar')} className={`flex-1 md:flex-none text-left px-4 py-3 rounded-lg font-bold transition flex items-center gap-2 ${currentView === 'radar' ? 'bg-sky-100 text-sky-700 ring-2 ring-sky-200' : 'hover:bg-gray-50 text-gray-600'}`}><span className="text-xl">☔</span> <span className="whitespace-nowrap">雨雲レーダー</span></button>
+          {/* ★Windy追加 */}
+          <button onClick={() => setCurrentView('windy')} className={`flex-1 md:flex-none text-left px-4 py-3 rounded-lg font-bold transition flex items-center gap-2 ${currentView === 'windy' ? 'bg-sky-100 text-sky-700 ring-2 ring-sky-200' : 'hover:bg-gray-50 text-gray-600'}`}><span className="text-xl">🌍</span> <span className="whitespace-nowrap">長期予報</span></button>
         </div>
       </div>
 
       {/* メインコンテンツ */}
       <div className="flex-1 flex flex-col h-full overflow-hidden relative">
         
-        {/* 検索バー (共通) */}
+        {/* 検索バー */}
         <div className="bg-white/80 backdrop-blur-sm p-4 shadow-sm z-10 flex gap-2 items-center absolute top-0 left-0 right-0">
           <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="地名 (例: 大阪 堺)" className="flex-1 border p-2 rounded-lg outline-none focus:ring-2 focus:ring-sky-400 shadow-inner bg-white" onKeyDown={(e) => e.key === 'Enter' && handleSearch()} />
           <button onClick={handleSearch} className="bg-sky-500 text-white px-4 py-2 rounded-lg font-bold shadow hover:bg-sky-600">検索</button>
           <button onClick={handleCurrentLocation} className="bg-gray-100 text-sky-600 px-3 py-2 rounded-lg font-bold shadow hover:bg-gray-200 text-xl" title="現在地">📍</button>
         </div>
 
-        {/* コンテンツ表示エリア */}
         <div className="flex-1 overflow-y-auto pt-20 p-4 pb-24">
           <div className="max-w-3xl mx-auto h-full">
             
             {loading ? <div className="text-center text-gray-500 py-20">読み込み中...</div> : (
               <>
-                {/* --- 週間予報ビュー --- */}
+                {/* --- 週間予報 --- */}
                 {currentView === 'forecast' && (
                   <div className="space-y-6 animate-fadeIn">
-                    {/* 現在の天気カード */}
                     <div className="bg-gradient-to-br from-blue-400 to-sky-300 p-6 rounded-2xl text-white shadow-lg text-center">
                       <h2 className="text-2xl font-bold mb-2">{locationName}</h2>
                       {currentWeather && (
@@ -181,7 +162,6 @@ export default function WeatherApp() {
                       )}
                     </div>
 
-                    {/* 週間予報リスト */}
                     <div className="bg-white rounded-xl shadow-sm overflow-hidden">
                       <h3 className="p-4 font-bold text-gray-700 border-b bg-gray-50">📅 週間予報</h3>
                       <div className="divide-y">
@@ -209,12 +189,30 @@ export default function WeatherApp() {
                 {currentView === 'radar' && (
                   <div className="h-full flex flex-col gap-4 animate-fadeIn">
                     <h2 className="text-xl font-bold text-gray-700 border-l-4 border-blue-500 pl-3">
-                      {locationName} 周辺の雨雲
+                      {locationName} 周辺の雨雲 <span className="text-xs font-normal text-gray-500">(過去〜直近)</span>
                     </h2>
                     <div className="flex-1 min-h-[500px] bg-white rounded-2xl shadow-lg overflow-hidden border">
-                      {/* 地図コンポーネント呼び出し */}
                       <RainRadar lat={mapLat} lon={mapLon} />
                     </div>
+                  </div>
+                )}
+
+                {/* --- ★Windy (長期予報) ビュー --- */}
+                {currentView === 'windy' && (
+                  <div className="h-full flex flex-col gap-4 animate-fadeIn">
+                    <h2 className="text-xl font-bold text-gray-700 border-l-4 border-green-500 pl-3">
+                      {locationName} 周辺の長期予報 <span className="text-xs font-normal text-gray-500">(Windy.com)</span>
+                    </h2>
+                    <div className="flex-1 min-h-[500px] bg-white rounded-2xl shadow-lg overflow-hidden border relative">
+                      <iframe 
+                        width="100%" 
+                        height="100%" 
+                        src={`https://embed.windy.com/embed2.html?lat=${mapLat}&lon=${mapLon}&detailLat=${mapLat}&detailLon=${mapLon}&width=650&height=450&zoom=10&level=surface&overlay=rain&product=ecmwf&menu=&message=&marker=&calendar=now&pressure=&type=map&location=coordinates&detail=&metricWind=default&metricTemp=default&radarRange=-1`}
+                        frameBorder="0"
+                        className="absolute inset-0 w-full h-full"
+                      ></iframe>
+                    </div>
+                    <p className="text-xs text-center text-gray-500">下のバーを動かすと、最大10日先までの雨雲予測が見られます</p>
                   </div>
                 )}
               </>
