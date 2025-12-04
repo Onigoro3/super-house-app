@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 
-// 天気データの型定義
 type DailyWeather = {
   date: string;
   maxTemp: number;
@@ -18,7 +17,7 @@ export default function WeatherApp() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // 天気コードをアイコンに変換
+  // 天気アイコン変換
   const getWeatherIcon = (code: number) => {
     if (code === 0) return '☀';
     if (code <= 3) return '⛅';
@@ -41,7 +40,7 @@ export default function WeatherApp() {
     return '曇り';
   };
 
-  // 緯度経度から天気を取得 (Open-Meteo API)
+  // 天気データ取得 (Open-Meteo)
   const fetchWeather = async (lat: number, lon: number, name: string) => {
     setLoading(true);
     try {
@@ -69,11 +68,11 @@ export default function WeatherApp() {
     }
   };
 
-  // ★改良版：現在地取得（地名も取る）
+  // ★改良版：現在地取得（OpenStreetMapで住所特定）
   const handleCurrentLocation = () => {
     setLoading(true);
     if (!navigator.geolocation) {
-      alert('お使いのブラウザは位置情報に対応していません');
+      alert('位置情報が使えません');
       setLoading(false);
       return;
     }
@@ -82,72 +81,60 @@ export default function WeatherApp() {
       async (position) => {
         const { latitude, longitude } = position.coords;
         
-        // 逆ジオコーディング（緯度経度から住所名を特定）
-        // 無料の BigDataCloud API を使用
-        let displayLocation = '現在地';
+        // 逆ジオコーディング (OpenStreetMap Nominatim)
         try {
-          const res = await fetch(
-            `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=ja`
-          );
+          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=10`);
           const data = await res.json();
-          // 都道府県 + 市町村 を組み立てる
-          const pref = data.principalSubdivision || '';
-          const city = data.locality || data.city || '';
-          if (pref || city) {
-            displayLocation = `📍 ${pref} ${city}`;
-          }
-        } catch (e) {
-          console.error("地名取得失敗", e);
-        }
+          
+          // 住所を組み立てる (例: 大阪府 堺市)
+          const addr = data.address;
+          // 市町村 > 区 > 都道府県 の順で探す
+          const city = addr.city || addr.town || addr.village || addr.ward || '';
+          const state = addr.province || addr.state || '';
+          
+          const displayName = `📍 ${state} ${city} (現在地)`;
+          fetchWeather(latitude, longitude, displayName);
 
-        fetchWeather(latitude, longitude, displayLocation);
+        } catch (e) {
+          // 失敗したら座標だけ表示
+          fetchWeather(latitude, longitude, '📍 現在地');
+        }
       },
-      (error) => {
+      () => {
         fetchWeather(35.6895, 139.6917, '東京 (デフォルト)');
       }
     );
   };
 
-  // ★改良版：地名検索機能
+  // ★最強版：地名検索 (OpenStreetMap Nominatim)
   const handleSearch = async () => {
     if (!searchQuery) return;
     setLoading(true);
 
     try {
-      // 1. 入力テキストをきれいにする
-      // 全角スペース、改行、タブを半角スペースに変換し、前後の空白を削除
-      let cleanQuery = searchQuery.replace(/[\u3000\n\r\t]/g, ' ').trim();
-      
-      // 2. まずそのまま検索してみる
-      let res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cleanQuery)}&count=1&language=ja&format=json`);
-      let data = await res.json();
+      // 全角スペースを半角に変換
+      const q = searchQuery.replace(/　/g, ' ').trim();
 
-      // 3. ヒットしなければ、スペースで区切って「最後の単語（より詳細な地名）」で再トライ
-      // 例：「大阪 堺市」でダメなら「堺市」で検索する
-      if (!data.results || data.results.length === 0) {
-        const parts = cleanQuery.split(' ');
-        if (parts.length > 1) {
-          const lastPart = parts[parts.length - 1]; // 一番後ろの単語
-          res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(lastPart)}&count=1&language=ja&format=json`);
-          data = await res.json();
-        }
-      }
+      // OpenStreetMapで検索 (日本の住所に強い)
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`);
+      const data = await res.json();
 
-      if (!data.results || data.results.length === 0) {
-        alert('場所が見つかりませんでした。\n「市町村名」だけで検索してみてください。');
+      if (!data || data.length === 0) {
+        alert('場所が見つかりませんでした。\n「大阪市」や「堺市」のように入力してみてください。');
         setLoading(false);
         return;
       }
 
-      const location = data.results[0];
-      // 日本の住所表記がある場合はそれを使う（admin1が都道府県）
-      const displayName = `${location.admin1 || ''} ${location.name}`;
+      const location = data[0];
+      // 検索した通りの名前を表示（またはAPIから返ってきた名前）
+      // data[0].display_name は長すぎるので、入力した名前をそのまま使うか、短縮して表示
+      const displayName = `🔎 ${q}`; 
       
-      fetchWeather(location.latitude, location.longitude, displayName);
-      setSearchQuery(''); // 入力欄をクリア
+      fetchWeather(parseFloat(location.lat), parseFloat(location.lon), displayName);
+      setSearchQuery('');
       
     } catch (error) {
-      alert('検索に失敗しました');
+      alert('検索エラーが発生しました');
       setLoading(false);
     }
   };
@@ -163,7 +150,7 @@ export default function WeatherApp() {
           <Link href="/" className="bg-sky-600 hover:bg-sky-700 px-4 py-2 rounded-lg font-bold text-sm transition">
             🔙 ホームへ
           </Link>
-          <h1 className="text-xl font-bold">☀ お天気 <span className="text-xs font-normal opacity-80">Open-Meteo</span></h1>
+          <h1 className="text-xl font-bold">☀ 天気予報</h1>
         </div>
       </header>
 
@@ -174,16 +161,16 @@ export default function WeatherApp() {
               type="text" 
               value={searchQuery} 
               onChange={(e) => setSearchQuery(e.target.value)} 
-              // 改行にも対応するためtextareaにしても良いが、enterキー検索の利便性を考えてinputのまま
-              placeholder="地名 (例: 大阪 堺市)" 
+              placeholder="地名 (例: 堺市 / 大阪 堺)" 
               className="flex-1 border p-2 rounded-lg outline-none focus:ring-2 focus:ring-sky-400"
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
             />
             <button onClick={handleSearch} className="bg-sky-500 text-white px-4 py-2 rounded-lg font-bold">🔍 検索</button>
           </div>
-          <div className="flex justify-between items-center">
-             <span className="text-xs text-gray-400">※市町村名を入れると正確です</span>
-             <button onClick={handleCurrentLocation} className="text-sm text-sky-600 font-bold hover:underline">📍 現在地に戻る</button>
+          <div className="flex justify-end">
+             <button onClick={handleCurrentLocation} className="text-sm text-sky-600 font-bold hover:underline flex items-center gap-1">
+               📍 現在地に戻る
+             </button>
           </div>
         </div>
 
@@ -192,6 +179,7 @@ export default function WeatherApp() {
         ) : (
           <>
             <div className="bg-gradient-to-br from-blue-400 to-sky-300 p-6 rounded-2xl text-white shadow-lg text-center">
+              {/* ここに地名が表示されます */}
               <h2 className="text-2xl font-bold mb-2">{locationName}</h2>
               {currentWeather && (
                 <div>
