@@ -16,9 +16,17 @@ export type Annotation = {
   page: number;
   color: string;
   size: number;
+  font: string; // ★追加: フォントファイル名
   width?: number;
   height?: number;
 };
+
+// ★フォントリスト定義
+export const FONT_OPTIONS = [
+  { label: '丸ゴシック', value: 'gothic.ttf', family: 'sans-serif' },
+  { label: '明朝体', value: 'mincho.ttf', family: 'serif' },
+  { label: '筆文字', value: 'brush.ttf', family: 'cursive' },
+];
 
 type Props = {
   file: File | null;
@@ -28,6 +36,7 @@ type Props = {
   pageNumber: number;
   currentColor: string;
   currentSize: number;
+  currentFont: string; // ★追加
   showGrid: boolean;
   onLoadSuccess: (data: { numPages: number }) => void;
   annotations: Annotation[];
@@ -52,7 +61,7 @@ MemoizedPDFPage.displayName = 'MemoizedPDFPage';
 
 export default function PDFViewer({ 
   file, zoom, tool, setTool, pageNumber, 
-  currentColor, currentSize, showGrid,
+  currentColor, currentSize, currentFont, showGrid,
   onLoadSuccess, annotations, setAnnotations,
   selectedId, setSelectedId, onHistoryPush
 }: Props) {
@@ -70,7 +79,7 @@ export default function PDFViewer({
     handle?: string;
   }>({ mode: null, startX:0, startY:0, startLeft:0, startTop:0, startWidth:0, startHeight:0 });
 
-  // ★追加: テキスト編集モード管理
+  // テキスト編集モード
   const [isEditingText, setIsEditingText] = useState(false);
 
   const snap = (val: number) => {
@@ -109,6 +118,7 @@ export default function PDFViewer({
       page: pageNumber,
       color: currentColor,
       size: currentSize,
+      font: currentFont, // ★選択中のフォントを保存
       content: tool === 'text' ? 'テキスト' : '',
       width: tool === 'text' ? 100 : (tool === 'line' ? 100 : 60),
       height: tool === 'text' ? 30 : (tool === 'line' ? 0 : 40),
@@ -120,24 +130,17 @@ export default function PDFViewer({
     setTool(null);
   };
 
-  // PC用マウスダウン
   const handleMouseDown = (e: React.MouseEvent, id: number, mode: 'move' | 'resize', handle?: string) => {
     e.stopPropagation();
     startDrag(e.clientX, e.clientY, id, mode, handle);
   };
 
-  // スマホ用タッチスタート
   const handleTouchStart = (e: React.TouchEvent, id: number, mode: 'move' | 'resize', handle?: string) => {
     e.stopPropagation();
-    // テキスト編集中以外の移動時はスクロールを防ぐ
-    if (mode === 'move' && !isEditingText) {
-       // e.preventDefault()はReactの合成イベントでは非推奨な場合があるため、CSSのtouch-actionで制御します
-    }
     const touch = e.touches[0];
     startDrag(touch.clientX, touch.clientY, id, mode, handle);
   };
 
-  // 共通ドラッグ開始処理
   const startDrag = (clientX: number, clientY: number, id: number, mode: 'move' | 'resize', handle?: string) => {
     if (tool) return;
     if (isEditingText && selectedId === id && mode === 'move') return;
@@ -159,7 +162,6 @@ export default function PDFViewer({
     });
   };
 
-  // ドラッグ終了（スナップ処理）
   const handleDragEnd = () => {
     if (dragState.mode && selectedId && showGrid) {
       setAnnotations(prev => prev.map(a => {
@@ -195,12 +197,10 @@ export default function PDFViewer({
         else if (dragState.mode === 'resize') {
           let newW = dragState.startWidth;
           let newH = dragState.startHeight;
-
           if (dragState.handle?.includes('e')) newW = Math.max(10, dragState.startWidth + deltaX);
           if (dragState.handle?.includes('w')) newW = Math.max(10, dragState.startWidth - deltaX);
           if (dragState.handle?.includes('s')) newH = Math.max(10, dragState.startHeight + deltaY);
           if (dragState.handle?.includes('n')) newH = Math.max(10, dragState.startHeight - deltaY);
-
           return { ...a, width: newW, height: newH };
         }
         return a;
@@ -209,7 +209,6 @@ export default function PDFViewer({
 
     const onMouseMove = (e: MouseEvent) => handleMove(e.clientX, e.clientY);
     const onTouchMove = (e: TouchEvent) => {
-      // ドラッグ中は画面スクロールを止める
       if (dragState.mode) e.preventDefault(); 
       handleMove(e.touches[0].clientX, e.touches[0].clientY);
     };
@@ -217,7 +216,7 @@ export default function PDFViewer({
     if (dragState.mode) {
       window.addEventListener('mousemove', onMouseMove);
       window.addEventListener('mouseup', handleDragEnd);
-      window.addEventListener('touchmove', onTouchMove, { passive: false }); // passive: false で preventDefault を有効化
+      window.addEventListener('touchmove', onTouchMove, { passive: false });
       window.addEventListener('touchend', handleDragEnd);
     }
     return () => {
@@ -228,8 +227,13 @@ export default function PDFViewer({
     };
   }, [dragState, selectedId, zoom, setAnnotations, showGrid]);
 
-  // 削除処理（右クリックメニューなどは廃止）
-  // 親画面の削除ボタンを使ってください
+  const removeAnnotation = (e: React.MouseEvent, id: number) => {
+    e.preventDefault();
+    if(!confirm("削除しますか？")) return;
+    onHistoryPush();
+    setAnnotations(annotations.filter(a => a.id !== id));
+    if (selectedId === id) setSelectedId(null);
+  };
 
   const updateText = (id: number, text: string) => {
     setAnnotations(annotations.map(a => a.id === id ? { ...a, content: text } : a));
@@ -273,6 +277,8 @@ export default function PDFViewer({
             const isSelected = selectedId === annot.id;
             const w = (annot.width || 60) * scale;
             const h = (annot.height || 40) * scale;
+            // 選択されたフォントのファミリーを取得（表示用）
+            const fontData = FONT_OPTIONS.find(f => f.value === annot.font) || FONT_OPTIONS[0];
             
             return (
               <div
@@ -291,7 +297,7 @@ export default function PDFViewer({
                   cursor: tool ? 'crosshair' : 'move',
                   zIndex: isSelected ? 100 : 10,
                   whiteSpace: 'nowrap',
-                  touchAction: 'none', // ★重要: これでスマホのスクロール干渉を防ぐ
+                  touchAction: 'none',
                 }}
               >
                 <div className="w-full h-full relative flex items-center justify-center">
@@ -303,12 +309,24 @@ export default function PDFViewer({
                         onBlur={() => setIsEditingText(false)}
                         autoFocus
                         className="bg-white/80 border-none outline-none p-1 min-w-[50px]"
-                        style={{ color: annot.color, fontSize: `${annot.size * scale}px`, fontFamily: 'sans-serif', fontWeight: 'bold' }}
+                        style={{ 
+                          color: annot.color, 
+                          fontSize: `${annot.size * scale}px`, 
+                          fontFamily: fontData.family, // ★フォント適用
+                          fontWeight: 'bold' 
+                        }}
                       />
                     ) : (
                       <div 
                         className="p-1 pointer-events-none"
-                        style={{ color: annot.color, fontSize: `${annot.size * scale}px`, fontFamily: 'sans-serif', fontWeight: 'bold', minWidth: '50px', minHeight: '20px' }}
+                        style={{ 
+                          color: annot.color, 
+                          fontSize: `${annot.size * scale}px`, 
+                          fontFamily: fontData.family, // ★フォント適用
+                          fontWeight: 'bold', 
+                          minWidth: '50px', 
+                          minHeight: '20px' 
+                        }}
                       >
                         {annot.content || 'テキスト'}
                       </div>

@@ -5,7 +5,7 @@ import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { PDFDocument, rgb, degrees, StandardFonts } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
-import type { Annotation } from './PDFViewer';
+import { Annotation, FONT_OPTIONS } from './PDFViewer'; // FONT_OPTIONSをインポート
 
 const PDFViewer = dynamic(() => import('./PDFViewer'), { 
   ssr: false,
@@ -28,6 +28,7 @@ export default function PDFEditor() {
   const [selectedTool, setSelectedTool] = useState<string | null>(null);
   const [currentColor, setCurrentColor] = useState('#000000'); 
   const [currentSize, setCurrentSize] = useState(16); 
+  const [currentFont, setCurrentFont] = useState('gothic.ttf'); // ★フォント選択用
   const [useJitter, setUseJitter] = useState(false); 
   const [showGrid, setShowGrid] = useState(false);
 
@@ -58,13 +59,12 @@ export default function PDFEditor() {
 
   const handleColorChange = (color: string) => { setCurrentColor(color); updateSelection({ color }); };
   const handleSizeChange = (size: number) => { setCurrentSize(size); updateSelection({ size }); };
+  const handleFontChange = (font: string) => { setCurrentFont(font); updateSelection({ font }); }; // ★フォント変更
   const hexToRgb = (hex: string) => { const r = parseInt(hex.slice(1, 3), 16)/255; const g = parseInt(hex.slice(3, 5), 16)/255; const b = parseInt(hex.slice(5, 7), 16)/255; return { r, g, b }; };
 
-  // ★ 保存実行処理
   const executeSave = async (useModalSettings = true) => {
     if (!file) return;
     setIsSaving(true);
-    
     const fileName = useModalSettings ? saveFileName : `edited_${file.name}`;
     const password = useModalSettings ? savePassword : '';
 
@@ -73,21 +73,20 @@ export default function PDFEditor() {
       const pdfDoc: any = await PDFDocument.load(arrayBuffer);
       pdfDoc.registerFontkit(fontkit);
       
-      // ★修正ポイント: ローカルの public/fonts/font.ttf を読み込む
-      let customFont;
-      try {
-        // fetchで自分のサーバーにあるフォントファイルを取りに行く
-        const fontUrl = window.location.origin + '/fonts/font.ttf';
-        const fontBytes = await fetch(fontUrl).then(res => {
-            if (!res.ok) throw new Error('Font fetch failed');
-            return res.arrayBuffer();
-        });
-        customFont = await pdfDoc.embedFont(fontBytes);
-      } catch (e) {
-        console.warn("ローカルフォント読み込み失敗", e);
-        alert("日本語フォント(public/fonts/font.ttf)が見つかりませんでした。標準フォントを使用します（文字化けする可能性があります）。");
-        customFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      // ★全フォントの読み込みマップ作成
+      const fontMap: Record<string, any> = {};
+      const fontFiles = ['gothic.ttf', 'mincho.ttf', 'brush.ttf'];
+
+      for (const f of fontFiles) {
+        try {
+          const fontBytes = await fetch(window.location.origin + '/fonts/' + f).then(res => res.arrayBuffer());
+          fontMap[f] = await pdfDoc.embedFont(fontBytes);
+        } catch (e) {
+          console.warn(`フォント ${f} の読み込みに失敗`);
+        }
       }
+      // フォールバック用
+      const standardFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
       const pages = pdfDoc.getPages();
 
@@ -107,41 +106,35 @@ export default function PDFEditor() {
           const topLeftY = annot.type === 'line' ? annot.y : annot.y - h/2;
           const pdfX = topLeftX + jitterX;
           const pdfY = height - topLeftY + jitterY;
-
           const c = hexToRgb(annot.color);
           const drawColor = rgb(c.r, c.g, c.b);
 
           if (annot.type === 'text' && annot.content) {
+            // ★アイテムごとのフォントを使用
+            const fontToUse = fontMap[annot.font || 'gothic.ttf'] || standardFont;
             page.drawText(annot.content, { 
-                x: pdfX, 
-                y: pdfY - annot.size, 
-                size: annot.size, 
-                font: customFont, // 埋め込んだフォントを使用
-                color: drawColor, 
-                rotate: degrees(jitterRot) 
+                x: pdfX, y: pdfY - annot.size, size: annot.size, 
+                font: fontToUse, color: drawColor, rotate: degrees(jitterRot) 
             });
           } else if (annot.type === 'check') {
-            page.drawText('✔', { x: pdfX, y: pdfY - annot.size, size: annot.size, font: customFont, color: drawColor });
-          } else if (annot.type === 'rect') {
-            page.drawRectangle({ x: pdfX, y: pdfY - h, width: w, height: h, borderColor: drawColor, borderWidth: Math.max(2, annot.size/3) });
+             // チェックマークは基本フォントか、ゴシックがあればそれを使う
+             const fontToUse = fontMap['gothic.ttf'] || standardFont;
+             page.drawText('✔', { x: pdfX, y: pdfY - annot.size, size: annot.size, font: fontToUse, color: drawColor });
+          } else if (['rect', 'white'].includes(annot.type)) {
+             const isWhite = annot.type === 'white';
+             page.drawRectangle({ x: pdfX, y: pdfY - h, width: w, height: h, borderColor: isWhite?undefined:drawColor, borderWidth: isWhite?0:Math.max(2, annot.size/3), color: isWhite?rgb(1,1,1):undefined });
           } else if (annot.type === 'circle') {
-            page.drawEllipse({ x: pdfX + w/2, y: pdfY - h/2, xScale: w/2, yScale: h/2, borderColor: drawColor, borderWidth: Math.max(2, annot.size/3) });
+             page.drawEllipse({ x: pdfX + w/2, y: pdfY - h/2, xScale: w/2, yScale: h/2, borderColor: drawColor, borderWidth: Math.max(2, annot.size/3) });
           } else if (annot.type === 'line') {
-            page.drawLine({ start: { x: pdfX, y: pdfY }, end: { x: pdfX + w, y: pdfY - h }, color: drawColor, thickness: Math.max(2, annot.size/3) });
-          } else if (annot.type === 'white') {
-            page.drawRectangle({ x: pdfX, y: pdfY - h, width: w, height: h, color: rgb(1, 1, 1) });
+             page.drawLine({ start: { x: pdfX, y: pdfY }, end: { x: pdfX + w, y: pdfY - h }, color: drawColor, thickness: Math.max(2, annot.size/3) });
           }
         }
       }
 
       if (password) {
         try {
-          pdfDoc.encrypt({
-            userPassword: password,
-            ownerPassword: password,
-            permissions: { printing: 'highResolution', modifying: false, copying: false, annotating: false, fillingForms: false, contentAccessibility: false, documentAssembly: false }
-          });
-        } catch (e) { console.error(e); alert("パスワード設定失敗"); }
+          pdfDoc.encrypt({ userPassword: password, ownerPassword: password, permissions: { printing: 'highResolution', modifying: false, copying: false, annotating: false, fillingForms: false, contentAccessibility: false, documentAssembly: false } });
+        } catch (e) { alert("パスワード設定失敗"); }
       }
 
       const pdfBytes = await pdfDoc.save();
@@ -150,14 +143,8 @@ export default function PDFEditor() {
       link.href = URL.createObjectURL(blob);
       link.download = fileName;
       link.click();
-
       setShowSaveModal(false);
-    } catch (e: any) { 
-      console.error(e);
-      alert(`保存エラー: ${e.message}`); 
-    } finally { 
-      setIsSaving(false); 
-    }
+    } catch (e: any) { console.error(e); alert(`保存エラー: ${e.message}`); } finally { setIsSaving(false); }
   };
 
   return (
@@ -181,61 +168,27 @@ export default function PDFEditor() {
           <button onClick={() => setSelectedTool(selectedTool === 'white' ? null : 'white')} className={`px-2 py-1 rounded font-bold text-xs ${selectedTool === 'white' ? 'bg-gray-800 text-white' : 'bg-gray-100'}`}>白塗り</button>
         </div>
         <div className="flex gap-2 items-center border-r pr-2">
-          <div className="flex items-center gap-1 border rounded p-1 bg-gray-50">
-             <span className="text-xs font-bold text-gray-500">色:</span>
-             <input type="color" value={currentColor} onChange={(e) => handleColorChange(e.target.value)} className="w-6 h-6 border-none bg-transparent cursor-pointer p-0" />
-          </div>
+          <div className="flex items-center gap-1 border rounded p-1 bg-gray-50"><span className="text-xs font-bold text-gray-500">色:</span><input type="color" value={currentColor} onChange={(e) => handleColorChange(e.target.value)} className="w-6 h-6 border-none bg-transparent cursor-pointer p-0" /></div>
           <input type="number" value={currentSize} onChange={(e) => handleSizeChange(Number(e.target.value))} className="w-10 border rounded text-center text-xs p-1" title="サイズ/太さ" />
-          {selectedId && (
-            <div className="flex gap-1 bg-gray-50 p-1 rounded">
-              <button onClick={() => updateSelection({ width: (annotations.find(a=>a.id===selectedId)?.width||0) - 5 })} className="px-1 text-[10px] bg-white border rounded">幅-</button>
-              <button onClick={() => updateSelection({ width: (annotations.find(a=>a.id===selectedId)?.width||0) + 5 })} className="px-1 text-[10px] bg-white border rounded">幅+</button>
-              <button onClick={() => updateSelection({ height: (annotations.find(a=>a.id===selectedId)?.height||0) - 5 })} className="px-1 text-[10px] bg-white border rounded">高-</button>
-              <button onClick={() => updateSelection({ height: (annotations.find(a=>a.id===selectedId)?.height||0) + 5 })} className="px-1 text-[10px] bg-white border rounded">高+</button>
-              <button onClick={deleteSelection} className="px-1 text-[10px] bg-red-100 text-red-600 border border-red-200 rounded ml-1">削除</button>
-            </div>
-          )}
+          
+          {/* ★フォント選択 */}
+          <select value={currentFont} onChange={(e) => handleFontChange(e.target.value)} className="bg-gray-100 border rounded px-1 text-xs h-7">
+            {FONT_OPTIONS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+          </select>
+
+          {selectedId && (<div className="flex gap-1 bg-gray-50 p-1 rounded"><button onClick={() => updateSelection({ width: (annotations.find(a=>a.id===selectedId)?.width||0) - 5 })} className="px-1 text-[10px] bg-white border rounded">幅-</button><button onClick={() => updateSelection({ width: (annotations.find(a=>a.id===selectedId)?.width||0) + 5 })} className="px-1 text-[10px] bg-white border rounded">幅+</button><button onClick={() => updateSelection({ height: (annotations.find(a=>a.id===selectedId)?.height||0) - 5 })} className="px-1 text-[10px] bg-white border rounded">高-</button><button onClick={() => updateSelection({ height: (annotations.find(a=>a.id===selectedId)?.height||0) + 5 })} className="px-1 text-[10px] bg-white border rounded">高+</button><button onClick={deleteSelection} className="px-1 text-[10px] bg-red-100 text-red-600 border border-red-200 rounded ml-1">削除</button></div>)}
         </div>
-        <div className="flex gap-2 items-center">
-          <button onClick={() => setShowGrid(!showGrid)} className={`px-2 py-1 text-xs font-bold rounded ${showGrid ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100'}`}># グリッド</button>
-          <label className="flex items-center gap-1 cursor-pointer bg-gray-50 px-2 py-1 rounded"><input type="checkbox" checked={useJitter} onChange={(e) => setUseJitter(e.target.checked)} /><span className="text-xs font-bold text-gray-600">📳 ジッター</span></label>
-          <button onClick={() => setZoom(Math.max(20, zoom - 10))} className="w-6 h-6 bg-gray-200 rounded">-</button><span className="text-xs font-mono w-8 text-center">{zoom}%</span><button onClick={() => setZoom(Math.min(200, zoom + 10))} className="w-6 h-6 bg-gray-200 rounded">+</button>
-        </div>
+        <div className="flex gap-2 items-center"><button onClick={() => setShowGrid(!showGrid)} className={`px-2 py-1 text-xs font-bold rounded ${showGrid ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100'}`}># グリッド</button><label className="flex items-center gap-1 cursor-pointer bg-gray-50 px-2 py-1 rounded"><input type="checkbox" checked={useJitter} onChange={(e) => setUseJitter(e.target.checked)} /><span className="text-xs font-bold text-gray-600">📳 ジッター</span></label><button onClick={() => setZoom(Math.max(20, zoom - 10))} className="w-6 h-6 bg-gray-200 rounded">-</button><span className="text-xs font-mono w-8 text-center">{zoom}%</span><button onClick={() => setZoom(Math.min(200, zoom + 10))} className="w-6 h-6 bg-gray-200 rounded">+</button></div>
       </div>
 
       <div className="flex-1 flex overflow-hidden">
         <div className="flex-1 bg-gray-500 p-8 overflow-auto flex justify-center relative">
-          {file ? (
-            <PDFViewer 
-              file={file} zoom={zoom} tool={selectedTool} setTool={setSelectedTool} pageNumber={pageNumber}
-              currentColor={currentColor} currentSize={currentSize} showGrid={showGrid} 
-              onLoadSuccess={({ numPages }) => setNumPages(numPages)} 
-              annotations={annotations} setAnnotations={setAnnotations}
-              selectedId={selectedId} setSelectedId={setSelectedId}
-              onHistoryPush={pushHistory} 
-            />
-          ) : (
-            <div className="w-full h-full flex flex-col items-center justify-center text-gray-400 border-2 border-dashed border-gray-400 m-4 rounded-xl"><p className="text-4xl mb-4">📂</p><p className="text-lg font-bold">PDFファイルを開いてください</p></div>
-          )}
+          {file ? <PDFViewer file={file} zoom={zoom} tool={selectedTool} setTool={setSelectedTool} pageNumber={pageNumber} currentColor={currentColor} currentSize={currentSize} currentFont={currentFont} showGrid={showGrid} onLoadSuccess={({ numPages }) => setNumPages(numPages)} annotations={annotations} setAnnotations={setAnnotations} selectedId={selectedId} setSelectedId={setSelectedId} onHistoryPush={pushHistory} /> : <div className="w-full h-full flex flex-col items-center justify-center text-gray-400 border-2 border-dashed border-gray-400 m-4 rounded-xl"><p className="text-4xl mb-4">📂</p><p className="text-lg font-bold">PDFファイルを開いてください</p></div>}
         </div>
         {file && numPages > 0 && <div className="w-32 bg-white border-l p-2 hidden md:block overflow-y-auto"><div className="space-y-2">{Array.from(new Array(numPages), (el, index) => (<div key={index} onClick={() => setPageNumber(index + 1)} className={`cursor-pointer border rounded p-1 text-xs text-center transition ${pageNumber === index + 1 ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'bg-gray-50 hover:bg-gray-100'}`}>{index + 1}</div>))}</div></div>}
       </div>
 
-      {showSaveModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-xl shadow-xl w-full max-w-sm">
-            <h3 className="text-lg font-bold mb-4">PDFを保存</h3>
-            <label className="block text-sm font-bold text-gray-700 mb-1">ファイル名</label>
-            <input type="text" value={saveFileName} onChange={e => setSaveFileName(e.target.value)} className="w-full border p-2 rounded mb-4" />
-            <label className="block text-sm font-bold text-gray-700 mb-1">パスワード (任意)</label>
-            <input type="password" value={savePassword} onChange={e => setSavePassword(e.target.value)} placeholder="設定する場合のみ入力" className="w-full border p-2 rounded mb-6" />
-            <div className="flex gap-3">
-              <button onClick={() => setShowSaveModal(false)} className="flex-1 bg-gray-200 text-gray-800 py-2 rounded font-bold">キャンセル</button>
-              <button onClick={() => executeSave(true)} disabled={isSaving} className="flex-1 bg-indigo-600 text-white py-2 rounded font-bold">{isSaving ? '処理中...' : 'ダウンロード'}</button>
-            </div>
-          </div>
-        </div>
-      )}
+      {showSaveModal && <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"><div className="bg-white p-6 rounded-xl shadow-xl w-full max-w-sm"><h3 className="text-lg font-bold mb-4">PDFを保存</h3><label className="block text-sm font-bold text-gray-700 mb-1">ファイル名</label><input type="text" value={saveFileName} onChange={e => setSaveFileName(e.target.value)} className="w-full border p-2 rounded mb-4" /><label className="block text-sm font-bold text-gray-700 mb-1">パスワード (任意)</label><input type="password" value={savePassword} onChange={e => setSavePassword(e.target.value)} placeholder="設定する場合のみ入力" className="w-full border p-2 rounded mb-6" /><div className="flex gap-3"><button onClick={() => setShowSaveModal(false)} className="flex-1 bg-gray-200 text-gray-800 py-2 rounded font-bold">キャンセル</button><button onClick={() => executeSave(true)} disabled={isSaving} className="flex-1 bg-indigo-600 text-white py-2 rounded font-bold">{isSaving ? '処理中...' : 'ダウンロード'}</button></div></div></div>}
     </div>
   );
 }
