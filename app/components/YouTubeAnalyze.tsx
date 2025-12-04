@@ -2,7 +2,6 @@
 'use client';
 import { useState } from 'react';
 import { supabase } from '@/lib/supabase';
-// PDF生成用（動的インポート用）
 
 type AnalyzedRecipe = {
   title: string;
@@ -17,7 +16,6 @@ export default function YouTubeAnalyze() {
   const [recipe, setRecipe] = useState<AnalyzedRecipe | null>(null);
   const [error, setError] = useState('');
   const [isSaved, setIsSaved] = useState(false);
-  const [isSaving, setIsSaving] = useState(false); // 保存中フラグ
 
   const analyzeVideo = async () => {
     if (!url) return;
@@ -32,105 +30,28 @@ export default function YouTubeAnalyze() {
     } catch (err) { setError('エラー：字幕があるYouTube動画か確認してください。'); } finally { setLoading(false); }
   };
 
-  // ★ YouTubeレシピを「レシピ帳」＆「書類管理(PDF)」の両方に保存する
+  // ★変更：PDF化せず、レシピデータとして保存
   const saveRecipe = async () => {
     if (!recipe) return;
-    setIsSaving(true);
+    
+    const { error } = await supabase.from('recipes').insert([{
+      title: recipe.title,
+      channel_name: recipe.channel_name || 'YouTube',
+      url: url,
+      ingredients: recipe.ingredients,
+      steps: recipe.steps,
+      source: 'youtube', // YouTubeレシピ帳に表示される
+      genre: '動画レシピ',
+      difficulty: '普通',
+      calories: 0
+    }]);
 
-    try {
-      // 1. 「YouTubeレシピ帳（データベース）」に保存
-      const { error: dbError } = await supabase.from('recipes').insert([{
-        title: recipe.title,
-        channel_name: recipe.channel_name || 'その他',
-        url: url,
-        ingredients: recipe.ingredients,
-        steps: recipe.steps,
-        source: 'youtube', // 区別用
-      }]);
-      if (dbError) throw dbError;
-
-      // 2. PDFファイルを自動生成して「書類管理」に保存
-      // ライブラリを動的読み込み
-      const { PDFDocument, rgb, StandardFonts } = await import('pdf-lib');
-      const fontkit = (await import('@pdf-lib/fontkit')).default;
-
-      const pdfDoc = await PDFDocument.create();
-      pdfDoc.registerFontkit(fontkit);
-      
-      // フォント読み込み（public/fonts/gothic.ttf）
-      let customFont;
-      try {
-        const fontBytes = await fetch(window.location.origin + '/fonts/gothic.ttf').then(res => res.arrayBuffer());
-        customFont = await pdfDoc.embedFont(fontBytes);
-      } catch (e) {
-        console.warn('Font load failed, using standard font');
-        customFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
-      }
-
-      const page = pdfDoc.addPage([595, 842]); // A4
-      const { height } = page.getSize();
-      const margin = 50;
-      let currentY = height - margin;
-
-      // タイトル（赤色）
-      page.drawText(recipe.title, { x: margin, y: currentY, size: 20, font: customFont, color: rgb(0.8, 0, 0) });
-      currentY -= 30;
-
-      // チャンネル名
-      page.drawText(`チャンネル: ${recipe.channel_name}`, { x: margin, y: currentY, size: 12, font: customFont, color: rgb(0.5, 0.5, 0.5) });
-      currentY -= 30;
-
-      // リンク
-      page.drawText(`動画URL: ${url}`, { x: margin, y: currentY, size: 10, font: customFont, color: rgb(0, 0, 1) });
-      currentY -= 40;
-
-      // 材料
-      page.drawText('【材料】', { x: margin, y: currentY, size: 14, font: customFont, color: rgb(0, 0, 0) });
-      currentY -= 20;
-      for (const ing of recipe.ingredients) {
-        page.drawText(`・${ing}`, { x: margin + 10, y: currentY, size: 12, font: customFont, color: rgb(0.2, 0.2, 0.2) });
-        currentY -= 18;
-      }
-      currentY -= 20;
-
-      // 作り方
-      page.drawText('【作り方】', { x: margin, y: currentY, size: 14, font: customFont, color: rgb(0, 0, 0) });
-      currentY -= 20;
-      for (let i = 0; i < recipe.steps.length; i++) {
-        const step = `${i + 1}. ${recipe.steps[i]}`;
-        // 簡易的な折り返し処理
-        const maxLineLength = 35;
-        for (let j = 0; j < step.length; j += maxLineLength) {
-          const line = step.substring(j, j + maxLineLength);
-          page.drawText(line, { x: margin + 10, y: currentY, size: 12, font: customFont, color: rgb(0.2, 0.2, 0.2) });
-          currentY -= 18;
-        }
-        currentY -= 5;
-      }
-
-      // PDFをBase64化
-      const pdfBytes = await pdfDoc.save();
-      // ブラウザでBufferを使うための簡易変換
-      const binaryString = String.fromCharCode(...new Uint8Array(pdfBytes));
-      const base64String = btoa(binaryString);
-
-      // 書類管理(documents)へ保存
-      const { error: docError } = await supabase.from('documents').insert([{
-        title: `${recipe.title}.pdf`,
-        folder_name: 'YouTube献立', // ★自動でこのフォルダに入ります
-        file_data: base64String
-      }]);
-
-      if (docError) throw docError;
-
+    if (error) {
+      alert('保存に失敗しました');
+      console.error(error);
+    } else {
       setIsSaved(true);
-      alert('「YouTubeレシピ帳」と「書類管理(YouTube献立フォルダ)」の両方に保存しました！');
-
-    } catch (e) {
-      console.error(e);
-      alert('保存中にエラーが発生しました');
-    } finally {
-      setIsSaving(false);
+      alert('「YouTubeレシピ帳」に保存しました！');
     }
   };
 
@@ -153,12 +74,8 @@ export default function YouTubeAnalyze() {
           </div>
           <div className="p-5 space-y-6">
             {!isSaved ? (
-              <button 
-                onClick={saveRecipe} 
-                disabled={isSaving}
-                className="w-full bg-blue-600 text-white py-2 rounded-lg font-bold shadow hover:bg-blue-700 mb-4"
-              >
-                {isSaving ? '保存中...' : '💾 このレシピを保存する'}
+              <button onClick={saveRecipe} className="w-full bg-blue-600 text-white py-2 rounded-lg font-bold shadow hover:bg-blue-700 mb-4">
+                💾 レシピ帳に保存
               </button>
             ) : (
               <div className="w-full bg-green-100 text-green-700 py-2 rounded-lg font-bold text-center mb-4 border border-green-300">✅ 保存済み</div>
