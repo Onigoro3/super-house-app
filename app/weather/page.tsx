@@ -69,7 +69,7 @@ export default function WeatherApp() {
     }
   };
 
-  // 現在地取得
+  // ★改良版：現在地取得（地名も取る）
   const handleCurrentLocation = () => {
     setLoading(true);
     if (!navigator.geolocation) {
@@ -79,12 +79,30 @@ export default function WeatherApp() {
     }
 
     navigator.geolocation.getCurrentPosition(
-      (position) => {
+      async (position) => {
         const { latitude, longitude } = position.coords;
-        fetchWeather(latitude, longitude, '現在地');
+        
+        // 逆ジオコーディング（緯度経度から住所名を特定）
+        // 無料の BigDataCloud API を使用
+        let displayLocation = '現在地';
+        try {
+          const res = await fetch(
+            `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=ja`
+          );
+          const data = await res.json();
+          // 都道府県 + 市町村 を組み立てる
+          const pref = data.principalSubdivision || '';
+          const city = data.locality || data.city || '';
+          if (pref || city) {
+            displayLocation = `📍 ${pref} ${city}`;
+          }
+        } catch (e) {
+          console.error("地名取得失敗", e);
+        }
+
+        fetchWeather(latitude, longitude, displayLocation);
       },
       (error) => {
-        // 失敗時は東京をデフォルト表示
         fetchWeather(35.6895, 139.6917, '東京 (デフォルト)');
       }
     );
@@ -122,8 +140,8 @@ export default function WeatherApp() {
       }
 
       const location = data.results[0];
-      // 日本の住所表記がある場合はそれを使う
-      const displayName = location.name; 
+      // 日本の住所表記がある場合はそれを使う（admin1が都道府県）
+      const displayName = `${location.admin1 || ''} ${location.name}`;
       
       fetchWeather(location.latitude, location.longitude, displayName);
       setSearchQuery(''); // 入力欄をクリア
