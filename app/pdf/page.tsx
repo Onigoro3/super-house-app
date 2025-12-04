@@ -3,13 +3,12 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
-import { PDFDocument, rgb, degrees, StandardFonts } from 'pdf-lib';
-import fontkit from '@pdf-lib/fontkit';
-import { Annotation, FONT_OPTIONS } from './PDFViewer'; // FONT_OPTIONSをインポート
+import type { Annotation } from './PDFViewer';
 
+// ★重要: PDFViewerはサーバー側で動かさない設定(ssr: false)で読み込む
 const PDFViewer = dynamic(() => import('./PDFViewer'), { 
   ssr: false,
-  loading: () => <div className="text-gray-500 p-10 text-center">Loading...</div>
+  loading: () => <div className="text-gray-500 p-10 text-center">Loading PDF Engine...</div>
 });
 
 const COLORS = [
@@ -28,7 +27,7 @@ export default function PDFEditor() {
   const [selectedTool, setSelectedTool] = useState<string | null>(null);
   const [currentColor, setCurrentColor] = useState('#000000'); 
   const [currentSize, setCurrentSize] = useState(16); 
-  const [currentFont, setCurrentFont] = useState('gothic.ttf'); // ★フォント選択用
+  const [currentFont, setCurrentFont] = useState('gothic.ttf');
   const [useJitter, setUseJitter] = useState(false); 
   const [showGrid, setShowGrid] = useState(false);
 
@@ -59,21 +58,27 @@ export default function PDFEditor() {
 
   const handleColorChange = (color: string) => { setCurrentColor(color); updateSelection({ color }); };
   const handleSizeChange = (size: number) => { setCurrentSize(size); updateSelection({ size }); };
-  const handleFontChange = (font: string) => { setCurrentFont(font); updateSelection({ font }); }; // ★フォント変更
+  const handleFontChange = (font: string) => { setCurrentFont(font); updateSelection({ font }); };
   const hexToRgb = (hex: string) => { const r = parseInt(hex.slice(1, 3), 16)/255; const g = parseInt(hex.slice(3, 5), 16)/255; const b = parseInt(hex.slice(5, 7), 16)/255; return { r, g, b }; };
 
+  // ★ 保存実行処理（ダイナミックインポート版）
   const executeSave = async (useModalSettings = true) => {
     if (!file) return;
     setIsSaving(true);
+    
     const fileName = useModalSettings ? saveFileName : `edited_${file.name}`;
     const password = useModalSettings ? savePassword : '';
 
     try {
+      // ★ここでライブラリを読み込む（サーバーでの実行を防ぐ）
+      const { PDFDocument, rgb, degrees, StandardFonts } = await import('pdf-lib');
+      const fontkit = (await import('@pdf-lib/fontkit')).default;
+
       const arrayBuffer = await file.arrayBuffer();
       const pdfDoc: any = await PDFDocument.load(arrayBuffer);
       pdfDoc.registerFontkit(fontkit);
       
-      // ★全フォントの読み込みマップ作成
+      // フォント読み込み
       const fontMap: Record<string, any> = {};
       const fontFiles = ['gothic.ttf', 'mincho.ttf', 'brush.ttf'];
 
@@ -106,18 +111,17 @@ export default function PDFEditor() {
           const topLeftY = annot.type === 'line' ? annot.y : annot.y - h/2;
           const pdfX = topLeftX + jitterX;
           const pdfY = height - topLeftY + jitterY;
+
           const c = hexToRgb(annot.color);
           const drawColor = rgb(c.r, c.g, c.b);
 
           if (annot.type === 'text' && annot.content) {
-            // ★アイテムごとのフォントを使用
             const fontToUse = fontMap[annot.font || 'gothic.ttf'] || standardFont;
             page.drawText(annot.content, { 
                 x: pdfX, y: pdfY - annot.size, size: annot.size, 
                 font: fontToUse, color: drawColor, rotate: degrees(jitterRot) 
             });
           } else if (annot.type === 'check') {
-             // チェックマークは基本フォントか、ゴシックがあればそれを使う
              const fontToUse = fontMap['gothic.ttf'] || standardFont;
              page.drawText('✔', { x: pdfX, y: pdfY - annot.size, size: annot.size, font: fontToUse, color: drawColor });
           } else if (['rect', 'white'].includes(annot.type)) {
@@ -149,6 +153,7 @@ export default function PDFEditor() {
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col h-screen text-gray-800">
+      {/* ヘッダーやツールバーのUIは変更なし */}
       <header className="bg-indigo-600 text-white p-3 shadow-md flex justify-between items-center z-10">
         <div className="flex items-center gap-4"><Link href="/" className="bg-indigo-700 hover:bg-indigo-800 px-3 py-1 rounded text-sm transition">🔙</Link><h1 className="text-lg font-bold">📄 PDF Editor <span className="text-xs opacity-70">Lv.Max</span></h1></div>
         <div className="text-sm truncate max-w-[200px]">{file ? file.name : ''}</div>
@@ -160,6 +165,7 @@ export default function PDFEditor() {
           <button onClick={() => executeSave(false)} disabled={!file || isSaving} className="bg-green-50 text-green-700 hover:bg-green-100 px-2 py-1 rounded font-bold text-xs">💾 上書き</button>
           <button onClick={() => setShowSaveModal(true)} disabled={!file || isSaving} className="bg-yellow-50 text-yellow-700 hover:bg-yellow-100 px-2 py-1 rounded font-bold text-xs">📝 別名保存</button>
         </div>
+
         <div className="flex gap-1 border-r pr-2 items-center">
           <button onClick={undo} disabled={history.length===0} className="px-2 py-1 text-xs font-bold bg-gray-100 hover:bg-gray-200 rounded disabled:opacity-50">↶ 元に戻す</button>
           <button onClick={() => setSelectedTool(selectedTool === 'text' ? null : 'text')} className={`px-2 py-1 rounded font-bold text-xs ${selectedTool === 'text' ? 'bg-gray-800 text-white' : 'bg-gray-100'}`}>T 文字</button>
@@ -167,13 +173,16 @@ export default function PDFEditor() {
           <select onChange={(e) => setSelectedTool(e.target.value)} value={['rect', 'circle', 'line'].includes(selectedTool || '') ? selectedTool! : 'shape'} className="bg-gray-100 border rounded px-1 text-xs h-7"><option value="shape" disabled>図形</option><option value="rect">□ 四角</option><option value="circle">〇 丸</option><option value="line">／ 線</option></select>
           <button onClick={() => setSelectedTool(selectedTool === 'white' ? null : 'white')} className={`px-2 py-1 rounded font-bold text-xs ${selectedTool === 'white' ? 'bg-gray-800 text-white' : 'bg-gray-100'}`}>白塗り</button>
         </div>
+
         <div className="flex gap-2 items-center border-r pr-2">
           <div className="flex items-center gap-1 border rounded p-1 bg-gray-50"><span className="text-xs font-bold text-gray-500">色:</span><input type="color" value={currentColor} onChange={(e) => handleColorChange(e.target.value)} className="w-6 h-6 border-none bg-transparent cursor-pointer p-0" /></div>
           <input type="number" value={currentSize} onChange={(e) => handleSizeChange(Number(e.target.value))} className="w-10 border rounded text-center text-xs p-1" title="サイズ/太さ" />
-          
-          {/* ★フォント選択 */}
+          {/* フォント選択 */}
           <select value={currentFont} onChange={(e) => handleFontChange(e.target.value)} className="bg-gray-100 border rounded px-1 text-xs h-7">
-            {FONT_OPTIONS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+             {/* FONT_OPTIONSはPDFViewerからインポートできないので直書きするか、別ファイル定義が望ましいですが、簡易的に直書き */}
+             <option value="gothic.ttf">丸ゴシック</option>
+             <option value="mincho.ttf">明朝体</option>
+             <option value="brush.ttf">筆文字</option>
           </select>
 
           {selectedId && (<div className="flex gap-1 bg-gray-50 p-1 rounded"><button onClick={() => updateSelection({ width: (annotations.find(a=>a.id===selectedId)?.width||0) - 5 })} className="px-1 text-[10px] bg-white border rounded">幅-</button><button onClick={() => updateSelection({ width: (annotations.find(a=>a.id===selectedId)?.width||0) + 5 })} className="px-1 text-[10px] bg-white border rounded">幅+</button><button onClick={() => updateSelection({ height: (annotations.find(a=>a.id===selectedId)?.height||0) - 5 })} className="px-1 text-[10px] bg-white border rounded">高-</button><button onClick={() => updateSelection({ height: (annotations.find(a=>a.id===selectedId)?.height||0) + 5 })} className="px-1 text-[10px] bg-white border rounded">高+</button><button onClick={deleteSelection} className="px-1 text-[10px] bg-red-100 text-red-600 border border-red-200 rounded ml-1">削除</button></div>)}
