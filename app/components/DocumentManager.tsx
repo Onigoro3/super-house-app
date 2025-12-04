@@ -24,7 +24,7 @@ export default function DocumentManager() {
   const [selectedFolder, setSelectedFolder] = useState<string>('すべて');
   const [folders, setFolders] = useState<string[]>([]);
   
-  // 編集用ステート（名前を統一）
+  // 編集用ステート
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editTitle, setEditTitle] = useState('');
   
@@ -43,7 +43,6 @@ export default function DocumentManager() {
     if (data) {
       setDocs(data);
       const uniqueFolders = Array.from(new Set(data.map(d => d.folder_name || '未分類'))).sort();
-      // デフォルトフォルダ
       const defaultFolders = ['PDF編集', 'AI献立', 'YouTube献立', '未分類'];
       setFolders(Array.from(new Set([...defaultFolders, ...uniqueFolders])));
     }
@@ -101,14 +100,14 @@ export default function DocumentManager() {
   const saveDocRename = async (id: number) => {
     if (!editTitle.trim()) return;
     await supabase.from('documents').update({ title: editTitle }).eq('id', id);
-    setEditingId(null); // ★ここを修正しました
+    setEditingId(null);
     fetchDocs();
   };
 
   const moveDoc = async (id: number) => {
     if (!moveTargetFolder.trim()) return;
     await supabase.from('documents').update({ folder_name: moveTargetFolder }).eq('id', id);
-    setMovingId(null); // ★ここを修正しました
+    setMovingId(null);
     fetchDocs();
   };
 
@@ -213,6 +212,8 @@ export default function DocumentManager() {
                     {/* 操作フッター */}
                     <div className="flex justify-between items-center text-xs mt-1 pt-2 border-t">
                       <div className="flex gap-2 items-center">
+                        <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{doc.folder_name || '未分類'}</span>
+                        
                         {movingId === doc.id ? (
                           <div className="flex gap-1">
                             <select 
@@ -227,10 +228,7 @@ export default function DocumentManager() {
                             <button onClick={() => setMovingId(null)} className="text-gray-400">×</button>
                           </div>
                         ) : (
-                          <>
-                            <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{doc.folder_name || '未分類'}</span>
-                            <button onClick={() => setMovingId(doc.id)} className="text-blue-500 hover:underline">移動</button>
-                          </>
+                          <button onClick={() => setMovingId(doc.id)} className="text-blue-500 hover:underline">移動</button>
                         )}
                       </div>
 
@@ -256,13 +254,14 @@ export default function DocumentManager() {
               <button onClick={() => setPreviewDoc(null)} className="text-gray-400 hover:text-white">✕ 閉じる</button>
             </div>
             <div className="flex-1 overflow-hidden relative bg-gray-500">
-              {/* 閲覧専用モードとしてPDFViewerを表示 */}
               <PDFViewer 
                 file={previewFile} 
                 zoom={100} 
                 tool={null} setTool={() => {}} 
                 pageNumber={1} 
-                currentColor="#000000" currentSize={0} showGrid={false}
+                currentColor="#000000" currentSize={0} 
+                currentFont="gothic.ttf" // ★ここを追加しました
+                showGrid={false}
                 onLoadSuccess={() => {}} 
                 annotations={[]} setAnnotations={() => {}} 
                 selectedId={null} setSelectedId={() => {}} 
