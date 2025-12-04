@@ -18,22 +18,21 @@ export default function WeatherApp() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // 天気コードをアイコンに変換する関数
+  // 天気コードをアイコンに変換
   const getWeatherIcon = (code: number) => {
-    if (code === 0) return '☀'; // 快晴
-    if (code === 1 || code === 2 || code === 3) return '⛅'; // 晴れ〜曇り
-    if (code >= 45 && code <= 48) return '🌫'; // 霧
-    if (code >= 51 && code <= 67) return '☔'; // 雨
-    if (code >= 71 && code <= 77) return '⛄'; // 雪
-    if (code >= 80 && code <= 82) return '☂'; // にわか雨
-    if (code >= 95) return '⚡'; // 雷雨
-    return '☁'; // その他
+    if (code === 0) return '☀';
+    if (code <= 3) return '⛅';
+    if (code <= 48) return '🌫';
+    if (code <= 67) return '☔';
+    if (code <= 77) return '⛄';
+    if (code <= 82) return '☂';
+    if (code >= 95) return '⚡';
+    return '☁';
   };
 
-  // 天気コードを言葉にする関数
   const getWeatherLabel = (code: number) => {
     if (code === 0) return '快晴';
-    if (code <= 3) return '晴れ/曇り';
+    if (code <= 3) return '晴れ/曇';
     if (code <= 48) return '霧';
     if (code <= 67) return '雨';
     if (code <= 77) return '雪';
@@ -42,7 +41,7 @@ export default function WeatherApp() {
     return '曇り';
   };
 
-  // 緯度経度から天気を取得する関数 (Open-Meteo API)
+  // 緯度経度から天気を取得 (Open-Meteo API)
   const fetchWeather = async (lat: number, lon: number, name: string) => {
     setLoading(true);
     try {
@@ -51,10 +50,8 @@ export default function WeatherApp() {
       );
       const data = await res.json();
 
-      // 現在の天気
       setCurrentWeather(data.current_weather);
 
-      // 週間予報の整形
       const daily = data.daily;
       const formattedWeekly = daily.time.map((date: string, index: number) => ({
         date,
@@ -72,7 +69,7 @@ export default function WeatherApp() {
     }
   };
 
-  // 現在地を取得して天気を表示
+  // 現在地取得
   const handleCurrentLocation = () => {
     setLoading(true);
     if (!navigator.geolocation) {
@@ -87,78 +84,95 @@ export default function WeatherApp() {
         fetchWeather(latitude, longitude, '現在地');
       },
       (error) => {
-        alert('位置情報の取得に失敗しました。設定を確認してください。');
-        // 失敗したらデフォルトで東京を表示
+        // 失敗時は東京をデフォルト表示
         fetchWeather(35.6895, 139.6917, '東京 (デフォルト)');
       }
     );
   };
 
-  // 地名検索機能 (Open-Meteo Geocoding API)
+  // ★改良版：地名検索機能
   const handleSearch = async () => {
     if (!searchQuery) return;
     setLoading(true);
+
     try {
-      // 日本語の地名から緯度経度を検索
-      const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${searchQuery}&count=1&language=ja&format=json`);
-      const data = await res.json();
+      // 1. 入力テキストをきれいにする
+      // 全角スペース、改行、タブを半角スペースに変換し、前後の空白を削除
+      let cleanQuery = searchQuery.replace(/[\u3000\n\r\t]/g, ' ').trim();
+      
+      // 2. まずそのまま検索してみる
+      let res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cleanQuery)}&count=1&language=ja&format=json`);
+      let data = await res.json();
+
+      // 3. ヒットしなければ、スペースで区切って「最後の単語（より詳細な地名）」で再トライ
+      // 例：「大阪 堺市」でダメなら「堺市」で検索する
+      if (!data.results || data.results.length === 0) {
+        const parts = cleanQuery.split(' ');
+        if (parts.length > 1) {
+          const lastPart = parts[parts.length - 1]; // 一番後ろの単語
+          res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(lastPart)}&count=1&language=ja&format=json`);
+          data = await res.json();
+        }
+      }
 
       if (!data.results || data.results.length === 0) {
-        alert('場所が見つかりませんでした');
+        alert('場所が見つかりませんでした。\n「市町村名」だけで検索してみてください。');
         setLoading(false);
         return;
       }
 
       const location = data.results[0];
-      fetchWeather(location.latitude, location.longitude, location.name);
+      // 日本の住所表記がある場合はそれを使う
+      const displayName = location.name; 
+      
+      fetchWeather(location.latitude, location.longitude, displayName);
       setSearchQuery(''); // 入力欄をクリア
+      
     } catch (error) {
       alert('検索に失敗しました');
       setLoading(false);
     }
   };
 
-  // 初回起動時に現在地を取得
   useEffect(() => {
     handleCurrentLocation();
   }, []);
 
   return (
     <div className="min-h-screen bg-sky-100 flex flex-col text-gray-800">
-      
-      {/* ヘッダー */}
       <header className="bg-sky-500 text-white p-4 shadow-md flex justify-between items-center sticky top-0 z-10">
         <div className="flex items-center gap-4">
           <Link href="/" className="bg-sky-600 hover:bg-sky-700 px-4 py-2 rounded-lg font-bold text-sm transition">
             🔙 ホームへ
           </Link>
-          <h1 className="text-xl font-bold">☀ お天気 <span className="text-xs font-normal opacity-80">by Open-Meteo</span></h1>
+          <h1 className="text-xl font-bold">☀ お天気 <span className="text-xs font-normal opacity-80">Open-Meteo</span></h1>
         </div>
       </header>
 
       <div className="p-4 max-w-3xl mx-auto w-full space-y-6">
-        
-        {/* 検索エリア */}
         <div className="bg-white p-4 rounded-xl shadow-sm flex flex-col gap-3">
           <div className="flex gap-2">
             <input 
               type="text" 
               value={searchQuery} 
               onChange={(e) => setSearchQuery(e.target.value)} 
-              placeholder="地名で検索 (例: 大阪、京都)" 
+              // 改行にも対応するためtextareaにしても良いが、enterキー検索の利便性を考えてinputのまま
+              placeholder="地名 (例: 大阪 堺市)" 
               className="flex-1 border p-2 rounded-lg outline-none focus:ring-2 focus:ring-sky-400"
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
             />
             <button onClick={handleSearch} className="bg-sky-500 text-white px-4 py-2 rounded-lg font-bold">🔍 検索</button>
           </div>
-          <button onClick={handleCurrentLocation} className="text-sm text-sky-600 font-bold text-right hover:underline">📍 現在地に戻る</button>
+          <div className="flex justify-between items-center">
+             <span className="text-xs text-gray-400">※市町村名を入れると正確です</span>
+             <button onClick={handleCurrentLocation} className="text-sm text-sky-600 font-bold hover:underline">📍 現在地に戻る</button>
+          </div>
         </div>
 
         {loading ? (
           <div className="text-center text-gray-500 py-20">読み込み中...</div>
         ) : (
           <>
-            {/* 現在の天気カード */}
             <div className="bg-gradient-to-br from-blue-400 to-sky-300 p-6 rounded-2xl text-white shadow-lg text-center">
               <h2 className="text-2xl font-bold mb-2">{locationName}</h2>
               {currentWeather && (
@@ -171,7 +185,6 @@ export default function WeatherApp() {
               )}
             </div>
 
-            {/* 週間予報リスト */}
             <div className="bg-white rounded-xl shadow-sm overflow-hidden">
               <h3 className="p-4 font-bold text-gray-700 border-b bg-gray-50">📅 週間予報</h3>
               <div className="divide-y">
