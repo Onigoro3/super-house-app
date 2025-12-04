@@ -73,12 +73,11 @@ export async function POST(req: Request) {
       3. **ハイブリッド:** 「この在庫（豚肉）で作れる、最近流行りのレシピは？」のように、在庫情報と検索情報を組み合わせて答えることも可能です。
     `;
 
-    // ★重要: Google検索ツールを有効化したモデルを作成
-    // (gemini-2.0-flash-exp または gemini-1.5-flash が対応しています)
+    // ★修正: as any をつけて型エラーを回避
     const model = genAI.getGenerativeModel({ 
       model: "gemini-2.0-flash-exp",
       tools: [
-        { googleSearch: {} } // ★これだけでGoogle検索できるようになります！
+        { googleSearch: {} } as any 
       ]
     });
 
