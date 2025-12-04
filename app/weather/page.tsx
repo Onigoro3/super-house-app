@@ -3,10 +3,11 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 
-// 3時間ごとのデータ型
+// 3時間ごとのデータ型（最高・最低を追加）
 type HourlyWeather = {
-  time: string;
-  temp: number;
+  time: string; // "12:00"
+  max: number;  // その3時間の最高
+  min: number;  // その3時間の最低
   code: number;
   label: string;
 };
@@ -90,10 +91,21 @@ export default function WeatherApp() {
         hourly.time.forEach((timeStr: string, hIndex: number) => {
           if (timeStr.startsWith(dateStr)) {
             const hour = new Date(timeStr).getHours();
+            
+            // 3時間おき (0, 3, 6...)
             if (hour % 3 === 0) {
+              // その時間から向こう3時間分(例: 0:00, 1:00, 2:00)の気温を取得
+              const tempsInBlock = [
+                hourly.temperature_2m[hIndex],
+                hourly.temperature_2m[hIndex + 1],
+                hourly.temperature_2m[hIndex + 2]
+              ].filter(t => t !== undefined); // データが存在するものだけ
+
               dayHourlyData.push({
                 time: `${hour}:00`,
-                temp: hourly.temperature_2m[hIndex],
+                // 3時間の間の最大・最小を計算
+                max: Math.max(...tempsInBlock),
+                min: Math.min(...tempsInBlock),
                 code: hourly.weathercode[hIndex],
                 label: getWeatherLabel(hourly.weathercode[hIndex])
               });
@@ -211,10 +223,10 @@ export default function WeatherApp() {
                           <span className="text-red-500">最高 {day.maxTemp}°</span>
                           <span className="text-blue-500">最低 {day.minTemp}°</span>
                         </div>
-                        {/* ★修正: テキストは回転させず、矢印だけ回転 */}
+                        {/* ★修正: 回転ではなく文字切り替えで矢印を表示 */}
                         <div className="flex items-center gap-1 mt-1 text-xs text-gray-400">
                           <span>詳細</span>
-                          <span className={`transition-transform duration-300 ${expandedDate === day.dateStr ? 'rotate-180' : ''}`}>▼</span>
+                          <span>{expandedDate === day.dateStr ? '▲' : '▼'}</span>
                         </div>
                       </div>
                     </button>
@@ -222,12 +234,7 @@ export default function WeatherApp() {
                     {expandedDate === day.dateStr && (
                       <div className="bg-slate-50 p-4 border-t border-b border-slate-100 animate-fadeIn">
                         <div className="flex justify-between items-center mb-3 border-l-4 border-sky-400 pl-2">
-                           <h4 className="text-xs font-bold text-gray-500">3時間ごとの予報</h4>
-                           {/* ★追加: 詳細内にも最高・最低気温を表示 */}
-                           <div className="text-xs font-bold">
-                             <span className="text-red-500 mr-2">最高: {day.maxTemp}°</span>
-                             <span className="text-blue-500">最低: {day.minTemp}°</span>
-                           </div>
+                           <h4 className="text-xs font-bold text-gray-500">3時間ごとの予報 (気温幅)</h4>
                         </div>
                         
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -238,8 +245,13 @@ export default function WeatherApp() {
                                 <span className="text-xs text-gray-800 font-bold mt-1">{hourData.label}</span>
                               </div>
                               <div className="flex flex-col items-end">
-                                <span className="text-2xl">{getWeatherIcon(hourData.code)}</span>
-                                <span className="text-sm font-bold text-slate-700">{hourData.temp}°</span>
+                                <span className="text-2xl mb-1">{getWeatherIcon(hourData.code)}</span>
+                                {/* ★3時間ごとの最高・最低を表示 */}
+                                <div className="flex gap-1 text-xs font-bold">
+                                  <span className="text-red-500">{hourData.max}°</span>
+                                  <span className="text-gray-300">/</span>
+                                  <span className="text-blue-500">{hourData.min}°</span>
+                                </div>
                               </div>
                             </div>
                           ))}
