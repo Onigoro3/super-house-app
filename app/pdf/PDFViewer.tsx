@@ -82,11 +82,10 @@ export default function PDFViewer({
     if (dragState.mode) return;
 
     if (!tool) {
-      // ツールがない時は選択解除
       const target = e.target as HTMLElement;
       if (target === e.currentTarget || target.className.includes('grid-layer')) {
         setSelectedId(null);
-        setIsEditingText(false); // 編集モード終了
+        setIsEditingText(false);
       }
       return;
     }
@@ -117,15 +116,30 @@ export default function PDFViewer({
 
     setAnnotations([...annotations, newAnnot]);
     setSelectedId(newAnnot.id);
-    if (tool === 'text') setIsEditingText(true); // 追加直後は編集モード
+    if (tool === 'text') setIsEditingText(true);
     setTool(null);
   };
 
+  // PC用マウスダウン
   const handleMouseDown = (e: React.MouseEvent, id: number, mode: 'move' | 'resize', handle?: string) => {
     e.stopPropagation();
+    startDrag(e.clientX, e.clientY, id, mode, handle);
+  };
+
+  // スマホ用タッチスタート
+  const handleTouchStart = (e: React.TouchEvent, id: number, mode: 'move' | 'resize', handle?: string) => {
+    e.stopPropagation();
+    // テキスト編集中以外の移動時はスクロールを防ぐ
+    if (mode === 'move' && !isEditingText) {
+       // e.preventDefault()はReactの合成イベントでは非推奨な場合があるため、CSSのtouch-actionで制御します
+    }
+    const touch = e.touches[0];
+    startDrag(touch.clientX, touch.clientY, id, mode, handle);
+  };
+
+  // 共通ドラッグ開始処理
+  const startDrag = (clientX: number, clientY: number, id: number, mode: 'move' | 'resize', handle?: string) => {
     if (tool) return;
-    
-    // テキスト編集中ならドラッグさせない
     if (isEditingText && selectedId === id && mode === 'move') return;
 
     onHistoryPush();
@@ -135,8 +149,8 @@ export default function PDFViewer({
 
     setDragState({
       mode,
-      startX: e.clientX,
-      startY: e.clientY,
+      startX: clientX,
+      startY: clientY,
       startLeft: annot.x,
       startTop: annot.y,
       startWidth: annot.width || 0,
@@ -145,7 +159,8 @@ export default function PDFViewer({
     });
   };
 
-  const handleMouseUp = () => {
+  // ドラッグ終了（スナップ処理）
+  const handleDragEnd = () => {
     if (dragState.mode && selectedId && showGrid) {
       setAnnotations(prev => prev.map(a => {
         if (a.id !== selectedId) return a;
@@ -162,14 +177,14 @@ export default function PDFViewer({
   };
 
   useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
+    const handleMove = (clientX: number, clientY: number) => {
       if (!dragState.mode || !selectedId) return;
 
       const scale = zoom / 100;
-      const deltaX = (e.clientX - dragState.startX) / scale;
-      const deltaY = (e.clientY - dragState.startY) / scale;
+      const deltaX = (clientX - dragState.startX) / scale;
+      const deltaY = (clientY - dragState.startY) / scale;
 
-      setAnnotations(prev => prev.map(a => {
+      setAnnotations((prev: Annotation[]) => prev.map(a => {
         if (a.id !== selectedId) return a;
 
         if (dragState.mode === 'move') {
@@ -192,34 +207,34 @@ export default function PDFViewer({
       }));
     };
 
+    const onMouseMove = (e: MouseEvent) => handleMove(e.clientX, e.clientY);
+    const onTouchMove = (e: TouchEvent) => {
+      // ドラッグ中は画面スクロールを止める
+      if (dragState.mode) e.preventDefault(); 
+      handleMove(e.touches[0].clientX, e.touches[0].clientY);
+    };
+
     if (dragState.mode) {
-      window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
-      // スマホ用タッチイベント
-      window.addEventListener('touchmove', (e) => handleMouseMove(e.touches[0] as any), { passive: false });
-      window.addEventListener('touchend', handleMouseUp);
+      window.addEventListener('mousemove', onMouseMove);
+      window.addEventListener('mouseup', handleDragEnd);
+      window.addEventListener('touchmove', onTouchMove, { passive: false }); // passive: false で preventDefault を有効化
+      window.addEventListener('touchend', handleDragEnd);
     }
     return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-      window.removeEventListener('touchmove', (e) => handleMouseMove(e.touches[0] as any));
-      window.removeEventListener('touchend', handleMouseUp);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', handleDragEnd);
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('touchend', handleDragEnd);
     };
   }, [dragState, selectedId, zoom, setAnnotations, showGrid]);
 
-  const removeAnnotation = (e: React.MouseEvent, id: number) => {
-    e.preventDefault();
-    if(!confirm("削除しますか？")) return;
-    onHistoryPush();
-    setAnnotations(annotations.filter(a => a.id !== id));
-    if (selectedId === id) setSelectedId(null);
-  };
+  // 削除処理（右クリックメニューなどは廃止）
+  // 親画面の削除ボタンを使ってください
 
   const updateText = (id: number, text: string) => {
     setAnnotations(annotations.map(a => a.id === id ? { ...a, content: text } : a));
   };
 
-  // ダブルクリックで編集モードへ
   const handleDoubleClick = (id: number) => {
     setSelectedId(id);
     setIsEditingText(true);
@@ -263,58 +278,42 @@ export default function PDFViewer({
               <div
                 key={annot.id}
                 onMouseDown={(e) => handleMouseDown(e, annot.id, 'move')}
-                onTouchStart={(e) => handleMouseDown(e as any, annot.id, 'move')} // スマホ対応
-                onContextMenu={(e) => removeAnnotation(e, annot.id)}
-                onDoubleClick={() => handleDoubleClick(annot.id)} // ダブルクリックで編集
+                onTouchStart={(e) => handleTouchStart(e, annot.id, 'move')}
+                onDoubleClick={() => handleDoubleClick(annot.id)}
                 style={{
                   position: 'absolute',
                   left: annot.x * scale,
                   top: annot.y * scale,
-                  width: annot.type === 'text' ? 'auto' : w, // テキストは幅自動
+                  width: annot.type === 'text' ? 'auto' : w,
                   height: annot.type === 'text' ? 'auto' : h,
                   transform: annot.type === 'line' ? 'none' : 'translate(-50%, -50%)',
                   border: isSelected ? '1px dashed #3B82F6' : 'none',
                   cursor: tool ? 'crosshair' : 'move',
                   zIndex: isSelected ? 100 : 10,
-                  whiteSpace: 'nowrap', // ★勝手な改行を禁止
+                  whiteSpace: 'nowrap',
+                  touchAction: 'none', // ★重要: これでスマホのスクロール干渉を防ぐ
                 }}
               >
                 <div className="w-full h-full relative flex items-center justify-center">
-                  
                   {annot.type === 'text' && (
-                    // 編集モードかどうかで表示を切り替え
                     isEditingText && isSelected ? (
                       <input
                         value={annot.content}
                         onChange={(e) => updateText(annot.id, e.target.value)}
-                        onBlur={() => setIsEditingText(false)} // フォーカス外れたら確定
+                        onBlur={() => setIsEditingText(false)}
                         autoFocus
                         className="bg-white/80 border-none outline-none p-1 min-w-[50px]"
-                        style={{ 
-                          color: annot.color,
-                          fontSize: `${annot.size * scale}px`,
-                          fontFamily: 'sans-serif',
-                          fontWeight: 'bold'
-                        }}
+                        style={{ color: annot.color, fontSize: `${annot.size * scale}px`, fontFamily: 'sans-serif', fontWeight: 'bold' }}
                       />
                     ) : (
-                      // 通常時はただのdivとして表示（移動しやすい）
                       <div 
-                        className="p-1 pointer-events-none" // クリックを親(div)に通す
-                        style={{ 
-                          color: annot.color,
-                          fontSize: `${annot.size * scale}px`,
-                          fontFamily: 'sans-serif',
-                          fontWeight: 'bold',
-                          minWidth: '50px',
-                          minHeight: '20px'
-                        }}
+                        className="p-1 pointer-events-none"
+                        style={{ color: annot.color, fontSize: `${annot.size * scale}px`, fontFamily: 'sans-serif', fontWeight: 'bold', minWidth: '50px', minHeight: '20px' }}
                       >
                         {annot.content || 'テキスト'}
                       </div>
                     )
                   )}
-
                   {annot.type === 'check' && <div style={{ color: annot.color, fontSize: `${Math.min(w, h)}px`, lineHeight: 1 }} className="pointer-events-none">✔</div>}
                   {annot.type === 'rect' && <div style={{ width: '100%', height: '100%', border: `${Math.max(2, annot.size/3 * scale)}px solid ${annot.color}`, pointerEvents: 'none' }}></div>}
                   {annot.type === 'circle' && <div style={{ width: '100%', height: '100%', border: `${Math.max(2, annot.size/3 * scale)}px solid ${annot.color}`, borderRadius: '50%', pointerEvents: 'none' }}></div>}
@@ -329,8 +328,8 @@ export default function PDFViewer({
                 {isSelected && !tool && (
                   <div
                     onMouseDown={(e) => handleMouseDown(e, annot.id, 'resize', 'se')}
-                    onTouchStart={(e) => handleMouseDown(e as any, annot.id, 'resize', 'se')}
-                    className="absolute bottom-0 right-0 w-6 h-6 bg-blue-500/50 border border-white cursor-se-resize pointer-events-auto rounded-full" // ハンドルを大きく
+                    onTouchStart={(e) => handleTouchStart(e, annot.id, 'resize', 'se')}
+                    className="absolute bottom-0 right-0 w-8 h-8 bg-blue-500/50 border border-white cursor-se-resize pointer-events-auto rounded-full"
                     style={{ transform: 'translate(50%, 50%)' }}
                   />
                 )}
