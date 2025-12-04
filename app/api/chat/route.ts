@@ -20,8 +20,14 @@ const getWeatherLabel = (code: number) => {
 };
 
 export async function POST(req: Request) {
+  // ★修正: 変数をここで定義しておく（スコープ対策）
+  let message = "";
+  let location = null;
+
   try {
-    const { message, location } = await req.json();
+    const body = await req.json();
+    message = body.message;
+    location = body.location;
 
     // 1. 家のデータを取得
     const { data: items } = await supabase.from('items').select('name, quantity').eq('status', 'ok');
@@ -57,7 +63,7 @@ export async function POST(req: Request) {
       【家の状況】
       ■ 日時: ${now}
       ■ 天気: ${weatherInfo}
-      ■ 冷蔵庫の在庫: ${inventoryText}
+      ■ 在庫: ${inventoryText}
       ■ 履歴: ${recipeText}
 
       【あなたの能力】
@@ -65,7 +71,7 @@ export async function POST(req: Request) {
       ユーザーの質問に対して、家の中のデータで答えられない場合（ニュース、観光地、一般的な知識など）は、**必ずGoogle検索を行って**最新情報を元に答えてください。
     `;
 
-    // ★修正ポイント: 最新モデル 'gemini-2.5-flash' を使用
+    // 最新モデルを使用 (検索ツール有効化)
     const model = genAI.getGenerativeModel({ 
       model: "gemini-2.5-flash",
       tools: [
@@ -90,12 +96,15 @@ export async function POST(req: Request) {
     
     // エラー時のフォールバック（検索なしで答える）
     try {
+      // メッセージが空の場合はフォールバックできないのでエラーを返す
+      if (!message) throw new Error("メッセージが読み取れませんでした");
+
       const fallbackModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
       const result = await fallbackModel.generateContent([
         `システムエラーが発生したため検索機能が使えません。以下の質問に、あなたの知識の範囲で答えてください。\n質問: ${message}`
       ]);
       return NextResponse.json({ reply: result.response.text() + "\n(※検索機能が一時的に利用できないため、知識ベースで回答しました)" });
-    } catch (e) {
+    } catch (e: any) {
       return NextResponse.json({ error: `システムエラーが発生しました: ${error.message}` }, { status: 500 });
     }
   }
