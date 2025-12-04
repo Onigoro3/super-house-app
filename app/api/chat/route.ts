@@ -57,57 +57,46 @@ export async function POST(req: Request) {
       【家の状況】
       ■ 日時: ${now}
       ■ 天気: ${weatherInfo}
-      ■ 在庫: ${inventoryText}
+      ■ 冷蔵庫の在庫: ${inventoryText}
       ■ 履歴: ${recipeText}
 
-      【ルール】
-      - 天気や在庫の質問には、上記のデータを使って正確に答えてください。
-      - それ以外の質問（ニュースや観光地など）は、あなたの知識で答えてください。
+      【あなたの能力】
+      あなたはGoogle検索機能を持っています。
+      ユーザーの質問に対して、家の中のデータで答えられない場合（ニュース、観光地、一般的な知識など）は、**必ずGoogle検索を行って**最新情報を元に答えてください。
     `;
 
-    // ★安全装置ロジック
-    let responseText = "";
-    
-    try {
-      // 作戦A: 検索ツールを使って回答を試みる
-      // (gemini-1.5-flash はGoogle検索に対応していますが、APIキーの設定によっては失敗することがあります)
-      const model = genAI.getGenerativeModel({ 
-        model: "gemini-1.5-flash",
-        tools: [{ googleSearch: {} } as any] 
-      });
-      
-      const chat = model.startChat({
-        history: [
-          { role: "user", parts: [{ text: systemPrompt }] },
-          { role: "model", parts: [{ text: "承知いたしました。" }] },
-        ],
-      });
+    // ★修正ポイント: 最新モデル 'gemini-2.5-flash' を使用
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-2.5-flash",
+      tools: [
+        { googleSearch: {} } as any
+      ]
+    });
 
-      const result = await chat.sendMessage(message);
-      responseText = result.response.text();
+    const chat = model.startChat({
+      history: [
+        { role: "user", parts: [{ text: systemPrompt }] },
+        { role: "model", parts: [{ text: "承知いたしました。最新モデルにて、正確な情報をお伝えします。" }] },
+      ],
+    });
 
-    } catch (searchError: any) {
-      console.warn("Google検索に失敗しました。標準モードに切り替えます。", searchError);
-      
-      // 作戦B: 検索なしで回答する（フォールバック）
-      // これなら確実に動きます
-      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-      const chat = model.startChat({
-        history: [
-          { role: "user", parts: [{ text: systemPrompt + "\n\n※現在、外部検索機能が一時的に利用できません。あなたの持つ知識の範囲で答えてください。" }] },
-          { role: "model", parts: [{ text: "承知いたしました。" }] },
-        ],
-      });
+    const result = await chat.sendMessage(message);
+    const response = result.response.text();
 
-      const result = await chat.sendMessage(message);
-      responseText = result.response.text();
-    }
-
-    return NextResponse.json({ reply: responseText });
+    return NextResponse.json({ reply: response });
 
   } catch (error: any) {
-    console.error("Critical Chat Error:", error);
-    // 何が起きたか画面に表示する
-    return NextResponse.json({ error: `システムエラーが発生しました: ${error.message}` }, { status: 500 });
+    console.error("Chat Error:", error);
+    
+    // エラー時のフォールバック（検索なしで答える）
+    try {
+      const fallbackModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+      const result = await fallbackModel.generateContent([
+        `システムエラーが発生したため検索機能が使えません。以下の質問に、あなたの知識の範囲で答えてください。\n質問: ${message}`
+      ]);
+      return NextResponse.json({ reply: result.response.text() + "\n(※検索機能が一時的に利用できないため、知識ベースで回答しました)" });
+    } catch (e) {
+      return NextResponse.json({ error: `システムエラーが発生しました: ${error.message}` }, { status: 500 });
+    }
   }
 }
