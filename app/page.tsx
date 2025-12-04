@@ -19,17 +19,16 @@ export default function Launcher() {
   if (!session) return <Auth onLogin={() => {}} />;
 
   const apps = [
-    // ★変更: 名前を「AI献立アプリ」、アイコンをキッチン風(🍳)、色をオレンジに
     { name: 'AI献立アプリ', icon: '🍳', color: 'bg-orange-400', link: '/house', desc: '在庫・献立・レシピ' },
-    
-    // ★追加: PDF編集アプリへのリンク
-    { name: 'PDF編集', icon: '📄', color: 'bg-red-500', link: '/pdf', desc: '結合・編集' },
+    { name: 'PDF編集', icon: '📄', color: 'bg-red-500', link: '/pdf', desc: '編集・作成' },
+    // ★追加: 書類管理アプリ（独立）
+    { name: '書類管理', icon: '🗂️', color: 'bg-blue-500', link: '/documents', desc: '保存・整理' },
     
     { name: 'ToDo', icon: '✅', color: 'bg-green-500', link: '#', desc: '準備中' },
-    { name: 'カレンダー', icon: '📅', color: 'bg-blue-500', link: '#', desc: '準備中' },
+    { name: 'カレンダー', icon: '📅', color: 'bg-sky-500', link: '#', desc: '準備中' },
     { name: 'メモ帳', icon: '📝', color: 'bg-yellow-400', link: '#', desc: '準備中' },
     { name: 'チャットAI', icon: '🤖', color: 'bg-purple-500', link: '#', desc: '準備中' },
-    { name: '天気', icon: '☀', color: 'bg-sky-400', link: '#', desc: '準備中' },
+    { name: '天気', icon: '☀', color: 'bg-cyan-400', link: '#', desc: '準備中' },
     { name: '設定', icon: '⚙', color: 'bg-gray-500', link: '#', desc: 'アカウント設定' },
   ];
 

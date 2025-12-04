@@ -2,7 +2,6 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-// 階層が変わったので ../ になっています
 import Sidebar from '../components/Sidebar';
 import StockList from '../components/StockList';
 import MoneyList from '../components/MoneyList';
@@ -12,7 +11,7 @@ import CookingGlossary from '../components/CookingGlossary';
 import WeeklyCalendar from '../components/WeeklyCalendar';
 import Auth from '../components/Auth';
 
-// ★ここをSidebar.tsxと完全に一致させる
+// ★ documents を削除
 type ViewType = 
   | 'home' 
   | 'calendar' 
@@ -23,14 +22,13 @@ type ViewType =
   | 'youtube_recipes' 
   | 'ai_recipes' 
   | 'youtube' 
-  | 'documents' 
   | 'glossary' 
   | 'money';
 
 export default function HouseApp() {
   const [session, setSession] = useState<any>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [currentView, setCurrentView] = useState<ViewType>('calendar'); // 初期画面
+  const [currentView, setCurrentView] = useState<ViewType>('calendar');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -56,7 +54,6 @@ export default function HouseApp() {
       case 'ai_recipes': return '🤖 AI献立レシピ帳';
       case 'glossary': return '📚 料理用語じてん';
       case 'calendar': return '📅 献立カレンダー';
-      // documents や home はここに来る前に遷移するのでdefault扱いでOK
       default: return 'AI献立アプリ';
     }
   };
@@ -71,9 +68,7 @@ export default function HouseApp() {
         <header className="bg-white p-4 shadow-sm flex items-center justify-between z-20 md:hidden">
           <div className="flex items-center gap-4">
             <button onClick={() => setIsSidebarOpen(true)} className="p-2 rounded hover:bg-gray-100">
-              <div className="w-6 h-0.5 bg-gray-600 mb-1.5"></div>
-              <div className="w-6 h-0.5 bg-gray-600 mb-1.5"></div>
-              <div className="w-6 h-0.5 bg-gray-600"></div>
+              <div className="w-6 h-0.5 bg-gray-600 mb-1.5"></div><div className="w-6 h-0.5 bg-gray-600 mb-1.5"></div><div className="w-6 h-0.5 bg-gray-600"></div>
             </button>
             <h1 className="text-lg font-bold text-gray-800">{getTitle()}</h1>
           </div>
@@ -91,9 +86,6 @@ export default function HouseApp() {
              currentView === 'ai_recipes' ? <RecipeBook mode="ai" /> : 
              currentView === 'glossary' ? <CookingGlossary /> : 
              currentView === 'calendar' ? <WeeklyCalendar /> : 
-             // documentsの場合はサイドバー側で遷移処理されるため、ここには到達しない想定だが
-             // 型合わせのためにStockListに流す（またはnullを返す）
-             currentView === 'documents' ? null :
              <StockList view={currentView as any} />}
           </div>
         </div>
