@@ -8,14 +8,14 @@ type HourlyWeather = {
   time: string;
   temp: number;
   code: number;
-  label: string; // ★追加: 天気名
+  label: string;
 };
 
 // 日次データ型
 type DailyWeather = {
   dateStr: string;
   displayDate: string;
-  weekday: string; // 曜日
+  weekday: string;
   maxTemp: number;
   minTemp: number;
   weatherCode: number;
@@ -30,24 +30,22 @@ export default function WeatherApp() {
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedDate, setExpandedDate] = useState<string | null>(null);
 
-  // 天気コードをアイコンに変換
   const getWeatherIcon = (code: number) => {
     if (code === 0) return '☀';
     if (code === 1) return '☀';
     if (code === 2) return '⛅';
     if (code === 3) return '☁';
     if (code >= 45 && code <= 48) return '🌫';
-    if (code >= 51 && code <= 55) return '🌧'; // 霧雨
-    if (code >= 61 && code <= 65) return '☔'; // 雨
-    if (code >= 66 && code <= 67) return '🌨'; // 氷雨
-    if (code >= 71 && code <= 77) return '⛄'; // 雪
-    if (code >= 80 && code <= 82) return '☂'; // にわか雨
-    if (code >= 85 && code <= 86) return '❄'; // 雪/みぞれ
-    if (code >= 95) return '⚡'; // 雷雨
+    if (code >= 51 && code <= 55) return '🌧';
+    if (code >= 61 && code <= 65) return '☔';
+    if (code >= 66 && code <= 67) return '🌨';
+    if (code >= 71 && code <= 77) return '⛄';
+    if (code >= 80 && code <= 82) return '☂';
+    if (code >= 85 && code <= 86) return '❄';
+    if (code >= 95) return '⚡';
     return '☁';
   };
 
-  // ★詳細な天気名に変換
   const getWeatherLabel = (code: number) => {
     switch (code) {
       case 0: return '快晴';
@@ -92,13 +90,12 @@ export default function WeatherApp() {
         hourly.time.forEach((timeStr: string, hIndex: number) => {
           if (timeStr.startsWith(dateStr)) {
             const hour = new Date(timeStr).getHours();
-            // 3時間おき (0, 3, 6...)
             if (hour % 3 === 0) {
               dayHourlyData.push({
                 time: `${hour}:00`,
                 temp: hourly.temperature_2m[hIndex],
                 code: hourly.weathercode[hIndex],
-                label: getWeatherLabel(hourly.weathercode[hIndex]) // ★詳細名を追加
+                label: getWeatherLabel(hourly.weathercode[hIndex])
               });
             }
           }
@@ -214,13 +211,25 @@ export default function WeatherApp() {
                           <span className="text-red-500">最高 {day.maxTemp}°</span>
                           <span className="text-blue-500">最低 {day.minTemp}°</span>
                         </div>
-                        <span className={`text-xs text-gray-400 mt-1 transition-transform ${expandedDate === day.dateStr ? 'rotate-180' : ''}`}>▼ 詳細</span>
+                        {/* ★修正: テキストは回転させず、矢印だけ回転 */}
+                        <div className="flex items-center gap-1 mt-1 text-xs text-gray-400">
+                          <span>詳細</span>
+                          <span className={`transition-transform duration-300 ${expandedDate === day.dateStr ? 'rotate-180' : ''}`}>▼</span>
+                        </div>
                       </div>
                     </button>
 
                     {expandedDate === day.dateStr && (
                       <div className="bg-slate-50 p-4 border-t border-b border-slate-100 animate-fadeIn">
-                        <h4 className="text-xs font-bold text-gray-500 mb-3 border-l-4 border-sky-400 pl-2">3時間ごとの予報</h4>
+                        <div className="flex justify-between items-center mb-3 border-l-4 border-sky-400 pl-2">
+                           <h4 className="text-xs font-bold text-gray-500">3時間ごとの予報</h4>
+                           {/* ★追加: 詳細内にも最高・最低気温を表示 */}
+                           <div className="text-xs font-bold">
+                             <span className="text-red-500 mr-2">最高: {day.maxTemp}°</span>
+                             <span className="text-blue-500">最低: {day.minTemp}°</span>
+                           </div>
+                        </div>
+                        
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                           {day.hourly.map((hourData, i) => (
                             <div key={i} className="flex items-center justify-between bg-white p-2 px-3 rounded border shadow-sm">
