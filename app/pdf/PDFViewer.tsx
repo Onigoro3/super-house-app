@@ -20,7 +20,6 @@ export type Annotation = {
   height?: number;
 };
 
-// ★ここが重要：showGridが含まれているか確認
 type Props = {
   file: File | null;
   zoom: number;
@@ -29,7 +28,7 @@ type Props = {
   pageNumber: number;
   currentColor: string;
   currentSize: number;
-  showGrid: boolean; // ★これが必須です
+  showGrid: boolean;
   onLoadSuccess: (data: { numPages: number }) => void;
   annotations: Annotation[];
   setAnnotations: Dispatch<SetStateAction<Annotation[]>>;
@@ -71,6 +70,9 @@ export default function PDFViewer({
     handle?: string;
   }>({ mode: null, startX:0, startY:0, startLeft:0, startTop:0, startWidth:0, startHeight:0 });
 
+  // ★追加: テキスト編集モード管理
+  const [isEditingText, setIsEditingText] = useState(false);
+
   const snap = (val: number) => {
     if (!showGrid) return val;
     return Math.round(val / GRID_SIZE) * GRID_SIZE;
@@ -81,10 +83,10 @@ export default function PDFViewer({
 
     if (!tool) {
       // ツールがない時は選択解除
-      // グリッドレイヤーをクリックした場合も解除対象にする
       const target = e.target as HTMLElement;
       if (target === e.currentTarget || target.className.includes('grid-layer')) {
         setSelectedId(null);
+        setIsEditingText(false); // 編集モード終了
       }
       return;
     }
@@ -115,12 +117,16 @@ export default function PDFViewer({
 
     setAnnotations([...annotations, newAnnot]);
     setSelectedId(newAnnot.id);
+    if (tool === 'text') setIsEditingText(true); // 追加直後は編集モード
     setTool(null);
   };
 
   const handleMouseDown = (e: React.MouseEvent, id: number, mode: 'move' | 'resize', handle?: string) => {
     e.stopPropagation();
     if (tool) return;
+    
+    // テキスト編集中ならドラッグさせない
+    if (isEditingText && selectedId === id && mode === 'move') return;
 
     onHistoryPush();
     setSelectedId(id);
@@ -141,7 +147,6 @@ export default function PDFViewer({
 
   const handleMouseUp = () => {
     if (dragState.mode && selectedId && showGrid) {
-      // ドロップ時にスナップ
       setAnnotations(prev => prev.map(a => {
         if (a.id !== selectedId) return a;
         return {
@@ -170,7 +175,6 @@ export default function PDFViewer({
         if (dragState.mode === 'move') {
           let newX = dragState.startLeft + deltaX;
           let newY = dragState.startTop + deltaY;
-          // 移動中はスナップさせない
           return { ...a, x: newX, y: newY };
         } 
         else if (dragState.mode === 'resize') {
@@ -191,10 +195,15 @@ export default function PDFViewer({
     if (dragState.mode) {
       window.addEventListener('mousemove', handleMouseMove);
       window.addEventListener('mouseup', handleMouseUp);
+      // スマホ用タッチイベント
+      window.addEventListener('touchmove', (e) => handleMouseMove(e.touches[0] as any), { passive: false });
+      window.addEventListener('touchend', handleMouseUp);
     }
     return () => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('touchmove', (e) => handleMouseMove(e.touches[0] as any));
+      window.removeEventListener('touchend', handleMouseUp);
     };
   }, [dragState, selectedId, zoom, setAnnotations, showGrid]);
 
@@ -208,6 +217,12 @@ export default function PDFViewer({
 
   const updateText = (id: number, text: string) => {
     setAnnotations(annotations.map(a => a.id === id ? { ...a, content: text } : a));
+  };
+
+  // ダブルクリックで編集モードへ
+  const handleDoubleClick = (id: number) => {
+    setSelectedId(id);
+    setIsEditingText(true);
   };
 
   const currentPageAnnotations = annotations.filter(a => a.page === pageNumber);
@@ -248,42 +263,74 @@ export default function PDFViewer({
               <div
                 key={annot.id}
                 onMouseDown={(e) => handleMouseDown(e, annot.id, 'move')}
+                onTouchStart={(e) => handleMouseDown(e as any, annot.id, 'move')} // スマホ対応
                 onContextMenu={(e) => removeAnnotation(e, annot.id)}
+                onDoubleClick={() => handleDoubleClick(annot.id)} // ダブルクリックで編集
                 style={{
                   position: 'absolute',
                   left: annot.x * scale,
                   top: annot.y * scale,
-                  width: w,
-                  height: h,
+                  width: annot.type === 'text' ? 'auto' : w, // テキストは幅自動
+                  height: annot.type === 'text' ? 'auto' : h,
                   transform: annot.type === 'line' ? 'none' : 'translate(-50%, -50%)',
                   border: isSelected ? '1px dashed #3B82F6' : 'none',
                   cursor: tool ? 'crosshair' : 'move',
-                  zIndex: isSelected ? 100 : 10
+                  zIndex: isSelected ? 100 : 10,
+                  whiteSpace: 'nowrap', // ★勝手な改行を禁止
                 }}
               >
-                <div className="w-full h-full relative flex items-center justify-center pointer-events-none">
+                <div className="w-full h-full relative flex items-center justify-center">
+                  
                   {annot.type === 'text' && (
-                    <textarea
-                      value={annot.content}
-                      onChange={(e) => updateText(annot.id, e.target.value)}
-                      className="w-full h-full bg-transparent border-none outline-none resize-none overflow-hidden pointer-events-auto"
-                      style={{ color: annot.color, fontSize: `${annot.size * scale}px`, lineHeight: 1.2, fontFamily: 'sans-serif', fontWeight: 'bold' }}
-                    />
+                    // 編集モードかどうかで表示を切り替え
+                    isEditingText && isSelected ? (
+                      <input
+                        value={annot.content}
+                        onChange={(e) => updateText(annot.id, e.target.value)}
+                        onBlur={() => setIsEditingText(false)} // フォーカス外れたら確定
+                        autoFocus
+                        className="bg-white/80 border-none outline-none p-1 min-w-[50px]"
+                        style={{ 
+                          color: annot.color,
+                          fontSize: `${annot.size * scale}px`,
+                          fontFamily: 'sans-serif',
+                          fontWeight: 'bold'
+                        }}
+                      />
+                    ) : (
+                      // 通常時はただのdivとして表示（移動しやすい）
+                      <div 
+                        className="p-1 pointer-events-none" // クリックを親(div)に通す
+                        style={{ 
+                          color: annot.color,
+                          fontSize: `${annot.size * scale}px`,
+                          fontFamily: 'sans-serif',
+                          fontWeight: 'bold',
+                          minWidth: '50px',
+                          minHeight: '20px'
+                        }}
+                      >
+                        {annot.content || 'テキスト'}
+                      </div>
+                    )
                   )}
-                  {annot.type === 'check' && <div style={{ color: annot.color, fontSize: `${Math.min(w, h)}px`, lineHeight: 1 }}>✔</div>}
-                  {annot.type === 'rect' && <div style={{ width: '100%', height: '100%', border: `${Math.max(2, annot.size/3 * scale)}px solid ${annot.color}` }}></div>}
-                  {annot.type === 'circle' && <div style={{ width: '100%', height: '100%', border: `${Math.max(2, annot.size/3 * scale)}px solid ${annot.color}`, borderRadius: '50%' }}></div>}
+
+                  {annot.type === 'check' && <div style={{ color: annot.color, fontSize: `${Math.min(w, h)}px`, lineHeight: 1 }} className="pointer-events-none">✔</div>}
+                  {annot.type === 'rect' && <div style={{ width: '100%', height: '100%', border: `${Math.max(2, annot.size/3 * scale)}px solid ${annot.color}`, pointerEvents: 'none' }}></div>}
+                  {annot.type === 'circle' && <div style={{ width: '100%', height: '100%', border: `${Math.max(2, annot.size/3 * scale)}px solid ${annot.color}`, borderRadius: '50%', pointerEvents: 'none' }}></div>}
                   {annot.type === 'line' && (
-                    <svg width="100%" height="100%" style={{ overflow: 'visible' }}>
+                    <svg width="100%" height="100%" style={{ overflow: 'visible', pointerEvents: 'none' }}>
                       <line x1="0" y1="0" x2="100%" y2="100%" stroke={annot.color} strokeWidth={Math.max(2, annot.size/3 * scale)} />
                     </svg>
                   )}
-                  {annot.type === 'white' && <div className="w-full h-full bg-white border border-gray-100"></div>}
+                  {annot.type === 'white' && <div className="w-full h-full bg-white border border-gray-100 pointer-events-none"></div>}
                 </div>
+
                 {isSelected && !tool && (
                   <div
                     onMouseDown={(e) => handleMouseDown(e, annot.id, 'resize', 'se')}
-                    className="absolute bottom-0 right-0 w-4 h-4 bg-blue-500 border border-white cursor-se-resize pointer-events-auto"
+                    onTouchStart={(e) => handleMouseDown(e as any, annot.id, 'resize', 'se')}
+                    className="absolute bottom-0 right-0 w-6 h-6 bg-blue-500/50 border border-white cursor-se-resize pointer-events-auto rounded-full" // ハンドルを大きく
                     style={{ transform: 'translate(50%, 50%)' }}
                   />
                 )}
