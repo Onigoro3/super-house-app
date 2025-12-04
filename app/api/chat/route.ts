@@ -23,15 +23,14 @@ export async function POST(req: Request) {
   try {
     const { message, location } = await req.json();
 
-    // 1. 家のデータを取得（在庫・レシピ）
+    // 1. 家のデータを取得
     const { data: items } = await supabase.from('items').select('name, quantity').eq('status', 'ok');
     const { data: recipes } = await supabase.from('recipes').select('title').order('created_at', { ascending: false }).limit(5);
     
     const inventoryText = items?.map(i => `${i.name}(${i.quantity})`).join(', ') || 'なし';
     const recipeText = recipes?.map(r => r.title).join(', ') || 'なし';
 
-    // 2. 天気データを取得（位置情報がある場合）
-    // ※AIが検索する前に、確実な現在地データをプロンプトに入れておくことで精度を高めます
+    // 2. 天気データを取得
     let weatherInfo = "（位置情報なし）";
     if (location) {
       try {
@@ -39,66 +38,76 @@ export async function POST(req: Request) {
           `https://api.open-meteo.com/v1/forecast?latitude=${location.lat}&longitude=${location.lon}&current_weather=true&daily=temperature_2m_max,temperature_2m_min,weathercode&timezone=auto`
         );
         const wData = await res.json();
-        const current = wData.current_weather;
-        const daily = wData.daily;
-        
-        weatherInfo = `
-          ・現在: ${getWeatherLabel(current.weathercode)}, 気温 ${current.temperature}℃
-          ・今日の最高: ${daily.temperature_2m_max[0]}℃, 最低: ${daily.temperature_2m_min[0]}℃
-        `;
+        if (wData.current_weather && wData.daily) {
+          const current = wData.current_weather;
+          const daily = wData.daily;
+          weatherInfo = `現在: ${getWeatherLabel(current.weathercode)}, 気温 ${current.temperature}℃ (最高:${daily.temperature_2m_max[0]}℃ / 最低:${daily.temperature_2m_min[0]}℃)`;
+        }
       } catch (e) {
         console.error("Weather Fetch Error", e);
       }
     }
 
-    // 3. 日時
+    // 3. プロンプト作成
     const now = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
-
-    // 4. 執事への指示書（Google検索を促す）
     const systemPrompt = `
       あなたは、この家の専属執事「セバスチャン」です。
       丁寧で落ち着いた口調（「〜でございます」）で話してください。
 
       【家の状況】
       ■ 日時: ${now}
-      ■ 現在地の正確な天気データ: ${weatherInfo}
-      ■ 冷蔵庫の在庫: ${inventoryText}
-      ■ 最近の献立: ${recipeText}
+      ■ 天気: ${weatherInfo}
+      ■ 在庫: ${inventoryText}
+      ■ 履歴: ${recipeText}
 
-      【あなたの能力: Google検索】
-      あなたはGoogle検索ツールを持っています。
-      **「ニュース」「観光地」「最新情報」「レシピ検索」** など、家の中のデータで分からないことは、**必ずGoogle検索を行ってから**、その検索結果に基づいて正確に答えてください。
-      知ったかぶり（ハルシネーション）は禁止です。
-
-      【回答ルール】
-      - 天気について聞かれたら、上記の「正確な天気データ」を優先して答えてください。
-      - ニュースや観光地については、Google検索の結果を要約して伝えてください。
-      - 在庫にある食材を使ったレシピを聞かれたら、在庫データとGoogle検索を組み合わせて提案してください。
+      【ルール】
+      - 天気や在庫の質問には、上記のデータを使って正確に答えてください。
+      - それ以外の質問（ニュースや観光地など）は、あなたの知識で答えてください。
     `;
 
-    // ★修正ポイント: 安定版モデル 'gemini-1.5-flash' を使用
-    const model = genAI.getGenerativeModel({ 
-      model: "gemini-1.5-flash",
-      // ★重要: Google検索ツールを有効化
-      tools: [
-        { googleSearch: {} } as any
-      ]
-    });
+    // ★安全装置ロジック
+    let responseText = "";
+    
+    try {
+      // 作戦A: 検索ツールを使って回答を試みる
+      // (gemini-1.5-flash はGoogle検索に対応していますが、APIキーの設定によっては失敗することがあります)
+      const model = genAI.getGenerativeModel({ 
+        model: "gemini-1.5-flash",
+        tools: [{ googleSearch: {} } as any] 
+      });
+      
+      const chat = model.startChat({
+        history: [
+          { role: "user", parts: [{ text: systemPrompt }] },
+          { role: "model", parts: [{ text: "承知いたしました。" }] },
+        ],
+      });
 
-    const chat = model.startChat({
-      history: [
-        { role: "user", parts: [{ text: systemPrompt }] },
-        { role: "model", parts: [{ text: "承知いたしました。Google検索を活用し、正確な情報をお伝えします。" }] },
-      ],
-    });
+      const result = await chat.sendMessage(message);
+      responseText = result.response.text();
 
-    const result = await chat.sendMessage(message);
-    const response = result.response.text();
+    } catch (searchError: any) {
+      console.warn("Google検索に失敗しました。標準モードに切り替えます。", searchError);
+      
+      // 作戦B: 検索なしで回答する（フォールバック）
+      // これなら確実に動きます
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+      const chat = model.startChat({
+        history: [
+          { role: "user", parts: [{ text: systemPrompt + "\n\n※現在、外部検索機能が一時的に利用できません。あなたの持つ知識の範囲で答えてください。" }] },
+          { role: "model", parts: [{ text: "承知いたしました。" }] },
+        ],
+      });
 
-    return NextResponse.json({ reply: response });
+      const result = await chat.sendMessage(message);
+      responseText = result.response.text();
+    }
+
+    return NextResponse.json({ reply: responseText });
 
   } catch (error: any) {
-    console.error("Chat Error:", error);
-    return NextResponse.json({ error: "申し訳ございません。通信エラー、または検索中に問題が発生しました。" }, { status: 500 });
+    console.error("Critical Chat Error:", error);
+    // 何が起きたか画面に表示する
+    return NextResponse.json({ error: `システムエラーが発生しました: ${error.message}` }, { status: 500 });
   }
 }
