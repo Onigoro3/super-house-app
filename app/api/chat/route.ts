@@ -30,7 +30,7 @@ export async function POST(req: Request) {
     const inventoryText = items?.map(i => `${i.name}(${i.quantity})`).join(', ') || 'なし';
     const recipeText = recipes?.map(r => r.title).join(', ') || 'なし';
 
-    // 2. ★追加: 天気データを取得（位置情報がある場合）
+    // 2. 現在地の天気データを取得（位置情報がある場合）
     let weatherInfo = "（位置情報がないため不明）";
     if (location) {
       try {
@@ -53,29 +53,39 @@ export async function POST(req: Request) {
     // 3. 日時取得
     const now = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
 
-    // 4. 執事への指示書（天気情報を追加）
+    // 4. 執事への指示書
     const systemPrompt = `
       あなたは、この家の専属執事「セバスチャン」です。
-      丁寧で落ち着いた口調で話してください。
+      丁寧で落ち着いた口調（「〜でございます」「承知いたしました」など）で話してください。
 
-      【現在の状況】
+      【現在の家の状況】
       ■ 日時: ${now}
       ■ 現在地の天気: ${weatherInfo}
       ■ 冷蔵庫の在庫: ${inventoryText}
       ■ 最近の献立履歴: ${recipeText}
 
-      【ルール】
-      - ユーザーの質問に対し、上記の【現在の状況】（特に天気と在庫）を元に正確に答えてください。
-      - 天気を聞かれたら、上記データに基づいて答えてください。嘘をつかないでください。
-      - 「今日は寒いですか？」などの質問には、気温データを元に判断してください。
-      - 献立の相談には、在庫にあるものを優先して提案してください。
+      【あなたの能力】
+      **あなたはGoogle検索を使って、最新のニュースや世界中の情報を調べることができます。**
+
+      【行動ルール】
+      1. **在庫や献立の相談:** 上記の【現在の家の状況】データを優先して使ってください。
+      2. **外部情報の質問:** 「今日のニュースは？」「近くの観光名所は？」「大谷翔平の試合結果は？」など、家の中のデータで分からないことを聞かれたら、**Google検索機能を使って**最新情報を調べて答えてください。
+      3. **ハイブリッド:** 「この在庫（豚肉）で作れる、最近流行りのレシピは？」のように、在庫情報と検索情報を組み合わせて答えることも可能です。
     `;
 
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    // ★重要: Google検索ツールを有効化したモデルを作成
+    // (gemini-2.0-flash-exp または gemini-1.5-flash が対応しています)
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-2.0-flash-exp",
+      tools: [
+        { googleSearch: {} } // ★これだけでGoogle検索できるようになります！
+      ]
+    });
+
     const chat = model.startChat({
       history: [
         { role: "user", parts: [{ text: systemPrompt }] },
-        { role: "model", parts: [{ text: "承知いたしました。正確な情報に基づいてお答えします。" }] },
+        { role: "model", parts: [{ text: "承知いたしました。家の管理はもちろん、世界中の最新情報まで、何なりとお申し付けくださいませ。" }] },
       ],
     });
 
