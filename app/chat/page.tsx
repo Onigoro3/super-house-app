@@ -16,17 +16,28 @@ export default function ChatApp() {
   const [loading, setLoading] = useState(true);
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([
-    { id: 1, role: 'bot', text: 'おかえりなさいませ。\n家の在庫やレシピのこと、何でもお聞きください。' }
+    { id: 1, role: 'bot', text: 'おかえりなさいませ。\n天気や在庫のことなど、何なりとお聞きください。' }
   ]);
   const [isThinking, setIsThinking] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  
+  // ★追加: 位置情報
+  const [location, setLocation] = useState<{ lat: number; lon: number } | null>(null);
 
-  // ログインチェック
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => { setSession(session); setLoading(false); });
+    
+    // ★追加: 起動時に位置情報を取得しておく
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setLocation({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+        },
+        (err) => console.error("位置情報取得エラー", err)
+      );
+    }
   }, []);
 
-  // メッセージ追加時に自動スクロール
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -45,7 +56,11 @@ export default function ChatApp() {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMsg.text }),
+        // ★修正: メッセージと一緒に位置情報も送る
+        body: JSON.stringify({ 
+          message: userMsg.text,
+          location: location 
+        }),
       });
       
       const data = await res.json();
@@ -53,7 +68,7 @@ export default function ChatApp() {
       const botMsg: Message = { id: Date.now() + 1, role: 'bot', text: data.reply || data.error };
       setMessages(prev => [...prev, botMsg]);
     } catch (e) {
-      setMessages(prev => [...prev, { id: Date.now(), role: 'bot', text: '申し訳ございません、声が聞き取れませんでした（エラー）。' }]);
+      setMessages(prev => [...prev, { id: Date.now(), role: 'bot', text: '申し訳ございません、通信エラーが発生いたしました。' }]);
     } finally {
       setIsThinking(false);
     }
@@ -65,7 +80,6 @@ export default function ChatApp() {
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col">
       
-      {/* ヘッダー */}
       <header className="bg-gray-800 p-4 shadow-md flex justify-between items-center sticky top-0 z-10 border-b border-gray-700">
         <div className="flex items-center gap-4">
           <Link href="/" className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg font-bold text-sm transition">
@@ -75,7 +89,6 @@ export default function ChatApp() {
         </div>
       </header>
 
-      {/* チャットエリア */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={scrollRef}>
         {messages.map((msg) => (
           <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -98,7 +111,6 @@ export default function ChatApp() {
         )}
       </div>
 
-      {/* 入力エリア */}
       <div className="bg-gray-800 p-4 border-t border-gray-700">
         <div className="flex gap-2 max-w-3xl mx-auto">
           <input
