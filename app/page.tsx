@@ -65,6 +65,14 @@ export default function Launcher() {
       link: '/documents', 
       desc: 'クラウド保存データ' 
     },
+    // app/page.tsx の apps 配列内
+    { 
+      name: 'チャットAI', 
+      icon: '🤖', 
+      color: 'bg-purple-500', 
+      link: '/chat',  // ★ここを '#' から '/chat' に変更
+      desc: '執事とお喋り' 
+    },
     
     // --- 以下、将来開発予定のアプリ（モックアップ） ---
     { name: 'ToDo', icon: '✅', color: 'bg-green-500', link: '#', desc: '準備中' },
