@@ -1,8 +1,18 @@
 // app/components/Sidebar.tsx
 'use client';
 
-// ★ 'money' を削除
-type ViewType = 'home' | 'calendar' | 'food' | 'seasoning' | 'other' | 'menu' | 'youtube_recipes' | 'ai_recipes' | 'youtube' | 'documents' | 'glossary';
+// ★ money と documents を削除して整理
+type ViewType = 
+  | 'home' 
+  | 'calendar' 
+  | 'food' 
+  | 'seasoning' 
+  | 'other' 
+  | 'menu' 
+  | 'youtube_recipes' 
+  | 'ai_recipes' 
+  | 'youtube' 
+  | 'glossary';
 
 type Props = {
   isOpen: boolean;
@@ -23,7 +33,6 @@ export default function Sidebar({ isOpen, onClose, currentView, onChangeView }: 
     { id: 'ai_recipes', label: 'AI献立レシピ帳', icon: '🤖' },
     { id: 'youtube', label: '動画分析', icon: '📹' },
     { id: 'glossary', label: '料理用語じてん', icon: '📚' },
-    // ★ 資産管理を削除
   ];
 
   const MenuContent = () => (
@@ -37,17 +46,27 @@ export default function Sidebar({ isOpen, onClose, currentView, onChangeView }: 
           <button
             key={item.id}
             onClick={() => {
-              if (item.id === 'home') window.location.href = '/';
-              else if (item.id === 'documents') window.location.href = '/documents';
-              else { onChangeView(item.id as ViewType); onClose(); }
+              if (item.id === 'home') {
+                window.location.href = '/';
+              } else {
+                onChangeView(item.id as ViewType);
+                onClose();
+              }
             }}
-            className={`w-full text-left p-3 rounded-lg flex items-center gap-3 transition ${currentView === item.id ? 'bg-indigo-50 text-indigo-700 font-bold border-l-4 border-indigo-600' : 'text-gray-600 hover:bg-gray-50'}`}
+            className={`w-full text-left p-3 rounded-lg flex items-center gap-3 transition ${
+              currentView === item.id 
+                ? 'bg-indigo-50 text-indigo-700 font-bold border-l-4 border-indigo-600' 
+                : 'text-gray-600 hover:bg-gray-50'
+            }`}
           >
-            <span className="text-xl">{item.icon}</span><span className="text-base">{item.label}</span>
+            <span className="text-xl">{item.icon}</span>
+            <span className="text-base">{item.label}</span>
           </button>
         ))}
       </nav>
-      <div className="p-4 text-xs text-center text-gray-400 border-t">v9.0 Standalone Money App</div>
+      <div className="p-4 text-xs text-center text-gray-400 border-t">
+        v9.1 Fixed Types
+      </div>
     </div>
   );
 

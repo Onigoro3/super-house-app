@@ -4,14 +4,14 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import Sidebar from '../components/Sidebar';
 import StockList from '../components/StockList';
-import MoneyList from '../components/MoneyList';
+// MoneyListのインポートは不要になったので削除
 import YouTubeAnalyze from '../components/YouTubeAnalyze';
 import RecipeBook from '../components/RecipeBook';
 import CookingGlossary from '../components/CookingGlossary';
 import WeeklyCalendar from '../components/WeeklyCalendar';
 import Auth from '../components/Auth';
 
-// ★ documents を削除
+// ★ money と documents を削除（Sidebarと一致させる）
 type ViewType = 
   | 'home' 
   | 'calendar' 
@@ -22,8 +22,7 @@ type ViewType =
   | 'youtube_recipes' 
   | 'ai_recipes' 
   | 'youtube' 
-  | 'glossary' 
-  | 'money';
+  | 'glossary';
 
 export default function HouseApp() {
   const [session, setSession] = useState<any>(null);
@@ -48,7 +47,6 @@ export default function HouseApp() {
       case 'seasoning': return '🧂 調味料の在庫';
       case 'other': return '🧻 日用品の在庫';
       case 'menu': return '👨‍🍳 献立・レシピ';
-      case 'money': return '💰 資産管理';
       case 'youtube': return '📺 動画レシピ分析';
       case 'youtube_recipes': return '📺 YouTubeレシピ帳';
       case 'ai_recipes': return '🤖 AI献立レシピ帳';
@@ -68,7 +66,9 @@ export default function HouseApp() {
         <header className="bg-white p-4 shadow-sm flex items-center justify-between z-20 md:hidden">
           <div className="flex items-center gap-4">
             <button onClick={() => setIsSidebarOpen(true)} className="p-2 rounded hover:bg-gray-100">
-              <div className="w-6 h-0.5 bg-gray-600 mb-1.5"></div><div className="w-6 h-0.5 bg-gray-600 mb-1.5"></div><div className="w-6 h-0.5 bg-gray-600"></div>
+              <div className="w-6 h-0.5 bg-gray-600 mb-1.5"></div>
+              <div className="w-6 h-0.5 bg-gray-600 mb-1.5"></div>
+              <div className="w-6 h-0.5 bg-gray-600"></div>
             </button>
             <h1 className="text-lg font-bold text-gray-800">{getTitle()}</h1>
           </div>
@@ -80,12 +80,13 @@ export default function HouseApp() {
         </header>
         <div className="flex-1 overflow-y-auto p-4 md:p-8">
           <div className="max-w-7xl mx-auto">
-            {currentView === 'money' ? <MoneyList /> : 
-             currentView === 'youtube' ? <YouTubeAnalyze /> : 
+            {/* 表示分岐 */}
+            {currentView === 'youtube' ? <YouTubeAnalyze /> : 
              currentView === 'youtube_recipes' ? <RecipeBook mode="youtube" /> : 
              currentView === 'ai_recipes' ? <RecipeBook mode="ai" /> : 
              currentView === 'glossary' ? <CookingGlossary /> : 
              currentView === 'calendar' ? <WeeklyCalendar /> : 
+             // money や documents は独立アプリになったので削除
              <StockList view={currentView as any} />}
           </div>
         </div>
