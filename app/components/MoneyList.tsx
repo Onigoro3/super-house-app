@@ -33,7 +33,6 @@ export default function MoneyList() {
   const [mode, setMode] = useState<'expense' | 'income'>('expense');
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
   const [showMenu, setShowMenu] = useState(false);
-  // ★追加：年間推移の開閉状態
   const [showYearly, setShowYearly] = useState(false);
 
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -46,6 +45,7 @@ export default function MoneyList() {
   const [formCategory, setFormCategory] = useState('食費');
 
   const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [budget, setBudget] = useState(50000);
   const [loading, setLoading] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -55,6 +55,8 @@ export default function MoneyList() {
     const { data: inc } = await supabase.from('incomes').select('*').order('date', { ascending: false });
     if (exp) setExpenses(exp);
     if (inc) setIncomes(inc);
+    const savedBudget = localStorage.getItem('monthly_budget');
+    if (savedBudget) setBudget(parseInt(savedBudget));
   };
 
   useEffect(() => {
@@ -110,9 +112,7 @@ export default function MoneyList() {
     setCurrentMonth(newDate);
   };
 
-  // --- データ計算 ---
-  
-  // カレンダーデータ生成
+  // データ計算
   const getCalendarData = () => {
     const year = currentMonth.getFullYear();
     const month = currentMonth.getMonth() + 1;
@@ -127,7 +127,6 @@ export default function MoneyList() {
     return calendar;
   };
 
-  // 年間サマリーデータ
   const getYearlySummary = () => {
     const year = currentMonth.getFullYear();
     const summary = [];
@@ -151,11 +150,8 @@ export default function MoneyList() {
   const monthBalance = monthTotalInc - monthTotalExp;
   const yearlySummary = getYearlySummary();
 
-  // ★円グラフ用データ作成
   const categoryTotals = currentMonthData.reduce((acc, day) => {
-    day.expenses.forEach(e => {
-      acc[e.category] = (acc[e.category] || 0) + e.price;
-    });
+    day.expenses.forEach(e => { acc[e.category] = (acc[e.category] || 0) + e.price; });
     return acc;
   }, {} as Record<string, number>);
 
@@ -170,7 +166,33 @@ export default function MoneyList() {
 
   const currentCategories = mode === 'expense' ? Object.keys(EXP_COLORS) : Object.keys(INC_COLORS);
 
-  // ★ PDF出力機能（年間推移対応）
+  // ★CSV出力機能
+  const exportCSV = async () => {
+    // 全データを取得してCSV化
+    const { data: allExp } = await supabase.from('expenses').select('*');
+    const { data: allInc } = await supabase.from('incomes').select('*');
+
+    if (!allExp || !allInc) return alert("データ取得エラー");
+
+    let csv = "\uFEFF"; // BOM (Excel文字化け防止)
+    csv += "日付,種別,カテゴリ,名称,金額\n";
+
+    allInc.forEach(i => {
+      csv += `${i.date},収入,${i.category},"${i.name}",${i.amount}\n`;
+    });
+    allExp.forEach(e => {
+      const dateStr = e.is_recurring ? `毎月${e.recurring_day}日` : e.date;
+      csv += `${dateStr},支出,${e.category},"${e.name}",${e.price}\n`;
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `家計簿データ_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+  };
+
+  // PDF出力機能
   const exportPDF = async () => {
     setIsExporting(true);
     try {
@@ -179,7 +201,6 @@ export default function MoneyList() {
       const pdfDoc = await PDFDocument.create();
       pdfDoc.registerFontkit(fontkit);
 
-      // フォント読み込み
       let customFont;
       try {
         const fontBytes = await fetch(window.location.origin + '/fonts/gothic.ttf').then(res => res.arrayBuffer());
@@ -199,7 +220,6 @@ export default function MoneyList() {
       page.drawText(`収入: ¥${monthTotalInc.toLocaleString()}   支出: ¥${monthTotalExp.toLocaleString()}   残高: ¥${monthBalance.toLocaleString()}`, { x: 50, y, size: 14, font: customFont, color: rgb(0.2, 0.2, 0.2) });
       y -= 40;
 
-      // ヘッダー
       page.drawText('日付', { x: 50, y, size: 10, font: customFont });
       page.drawText('内容', { x: 120, y, size: 10, font: customFont });
       page.drawText('カテゴリ', { x: 300, y, size: 10, font: customFont });
@@ -208,7 +228,6 @@ export default function MoneyList() {
       page.drawLine({ start: { x: 50, y }, end: { x: 550, y }, thickness: 1 });
       y -= 20;
 
-      // 日々の明細を出力
       currentMonthData.forEach(day => {
          day.incomes.forEach(inc => {
             if (y < 50) { page = pdfDoc.addPage([595, 842]); y = height - 50; }
@@ -228,13 +247,12 @@ export default function MoneyList() {
          });
       });
 
-      // ★ 2ページ目：年間推移サマリー
+      // 2ページ目：年間サマリー
       const summaryPage = pdfDoc.addPage([595, 842]);
       let sy = height - 50;
       summaryPage.drawText(`${currentMonth.getFullYear()}年 年間収支サマリー`, { x: 50, y: sy, size: 20, font: customFont });
       sy -= 40;
 
-      // 表ヘッダー
       summaryPage.drawText('月', { x: 50, y: sy, size: 12, font: customFont });
       summaryPage.drawText('収入', { x: 150, y: sy, size: 12, font: customFont });
       summaryPage.drawText('支出', { x: 300, y: sy, size: 12, font: customFont });
@@ -263,16 +281,28 @@ export default function MoneyList() {
 
   return (
     <div className="relative min-h-screen pb-24">
-      {/* サイドメニュー */}
+      
+      {/* サイドメニュー (★修正：左側に配置) */}
       {showMenu && (
         <div className="fixed inset-0 z-50 flex">
-          <div className="bg-black/50 flex-1" onClick={() => setShowMenu(false)}></div>
-          <div className="bg-white w-64 h-full shadow-2xl p-4 flex flex-col">
+          {/* メニュー本体（左） */}
+          <div className="bg-white w-64 h-full shadow-2xl p-4 flex flex-col animate-slideInLeft">
             <h2 className="font-bold text-xl mb-6 text-gray-800">メニュー</h2>
             <button onClick={() => { setMode('expense'); setFormCategory('食費'); setShowMenu(false); }} className={`p-3 rounded-lg font-bold text-left mb-2 ${mode === 'expense' ? 'bg-red-50 text-red-600' : 'text-gray-600'}`}>📤 支出管理</button>
             <button onClick={() => { setMode('income'); setFormCategory('給料'); setShowMenu(false); }} className={`p-3 rounded-lg font-bold text-left mb-2 ${mode === 'income' ? 'bg-blue-50 text-blue-600' : 'text-gray-600'}`}>📥 収入管理</button>
-            <button onClick={exportPDF} disabled={isExporting} className="p-3 rounded-lg font-bold text-left mb-2 bg-green-50 text-green-700 mt-4">{isExporting ? '作成中...' : '📑 PDF出力'}</button>
+            
+            <div className="border-t my-4 pt-4">
+              <p className="text-xs font-bold text-gray-400 mb-2">データ出力</p>
+              <button onClick={exportPDF} disabled={isExporting} className="w-full p-3 rounded-lg font-bold text-left mb-2 bg-green-50 text-green-700 flex items-center gap-2">
+                <span>{isExporting ? '...' : '📑 PDF出力'}</span>
+              </button>
+              <button onClick={exportCSV} className="w-full p-3 rounded-lg font-bold text-left mb-2 bg-gray-100 text-gray-700 flex items-center gap-2">
+                <span>📄 CSV出力</span>
+              </button>
+            </div>
           </div>
+          {/* 背景（右） */}
+          <div className="bg-black/50 flex-1" onClick={() => setShowMenu(false)}></div>
         </div>
       )}
 
@@ -283,10 +313,9 @@ export default function MoneyList() {
         <div className={`px-3 py-1 rounded-full font-bold text-xs ${mode === 'expense' ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>{mode === 'expense' ? '支出' : '収入'}</div>
       </div>
 
-      {/* ★ 月間サマリー（円グラフ＆収支） */}
+      {/* 月間サマリー */}
       <div className="px-4 mb-4">
         <div className="bg-white p-6 rounded-2xl shadow-lg border border-gray-100 flex items-center gap-6">
-          {/* 円グラフ */}
           <div className="relative w-28 h-28 shrink-0">
             <div className="w-full h-full rounded-full" style={{ background: monthTotalExp > 0 ? `conic-gradient(${pieChartGradient})` : '#eee' }}></div>
             <div className="absolute inset-2 bg-white rounded-full flex items-center justify-center flex-col">
@@ -294,33 +323,18 @@ export default function MoneyList() {
               <span className={`font-bold ${monthBalance >= 0 ? 'text-blue-600' : 'text-red-500'}`}>¥{monthBalance.toLocaleString()}</span>
             </div>
           </div>
-
-          {/* 内訳テキスト */}
           <div className="flex-1">
-            <div className="flex justify-between text-sm mb-2">
-              <span className="text-blue-500 font-bold">収入</span>
-              <span>¥{monthTotalInc.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between text-sm mb-2">
-              <span className="text-red-500 font-bold">支出</span>
-              <span>¥{monthTotalExp.toLocaleString()}</span>
-            </div>
-            <div className="border-t pt-2 flex justify-between font-bold">
-              <span>収支差</span>
-              <span className={monthBalance >= 0 ? 'text-blue-600' : 'text-red-500'}>{monthBalance >= 0 ? '+' : ''}¥{monthBalance.toLocaleString()}</span>
-            </div>
+            <div className="flex justify-between text-sm mb-2"><span className="text-blue-500 font-bold">収入</span><span>¥{monthTotalInc.toLocaleString()}</span></div>
+            <div className="flex justify-between text-sm mb-2"><span className="text-red-500 font-bold">支出</span><span>¥{monthTotalExp.toLocaleString()}</span></div>
+            <div className="border-t pt-2 flex justify-between font-bold"><span>収支差</span><span className={monthBalance >= 0 ? 'text-blue-600' : 'text-red-500'}>{monthBalance >= 0 ? '+' : ''}¥{monthBalance.toLocaleString()}</span></div>
           </div>
         </div>
       </div>
 
-      {/* ★ 年間推移（折りたたみ式） */}
+      {/* 年間推移 */}
       <div className="px-4 mb-6">
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <button onClick={() => setShowYearly(!showYearly)} className="w-full p-3 flex justify-between items-center bg-gray-50 font-bold text-gray-600 text-sm">
-            <span>📅 年間推移 (1月〜12月)</span>
-            <span>{showYearly ? '▲' : '▼'}</span>
-          </button>
-          
+          <button onClick={() => setShowYearly(!showYearly)} className="w-full p-3 flex justify-between items-center bg-gray-50 font-bold text-gray-600 text-sm"><span>📅 年間推移 (1月〜12月)</span><span>{showYearly ? '▲' : '▼'}</span></button>
           {showYearly && (
             <div className="p-4 overflow-x-auto animate-fadeIn">
               <div className="flex gap-3 min-w-max items-end h-40 pb-6">
@@ -345,14 +359,12 @@ export default function MoneyList() {
         </div>
       </div>
 
-      {/* 月切り替え */}
       <div className="flex justify-between items-center px-6 mb-4">
         <button onClick={() => changeMonth(-1)} className="text-2xl text-gray-400">◀</button>
         <span className="font-bold text-gray-600">{currentMonth.getMonth()+1}月の詳細</span>
         <button onClick={() => changeMonth(1)} className="text-2xl text-gray-400">▶</button>
       </div>
 
-      {/* 入力フォーム */}
       <div className={`mx-4 p-4 rounded-xl border shadow-sm mb-6 ${mode === 'expense' ? 'bg-red-50 border-red-100' : 'bg-blue-50 border-blue-100'}`}>
         <h3 className={`font-bold mb-3 ${mode === 'expense' ? 'text-red-700' : 'text-blue-700'}`}>{mode === 'expense' ? '💸 支出入力' : '💰 収入入力'}</h3>
         <div className="grid grid-cols-2 gap-2">
@@ -369,9 +381,9 @@ export default function MoneyList() {
           <button onClick={handleSubmit} disabled={loading} className={`flex-1 py-3 rounded-lg font-bold text-white shadow ${mode === 'expense' ? 'bg-red-500' : 'bg-blue-500'}`}>{loading ? '...' : '追加'}</button>
           <label className={`flex items-center justify-center bg-white border px-3 rounded-lg cursor-pointer ${isAnalyzing?'opacity-50':''}`}>📷<input type="file" accept="image/*" capture="environment" onChange={handleImageUpload} className="hidden" disabled={isAnalyzing} /></label>
         </div>
+        {mode === 'income' && <p className="text-xs text-blue-400 text-center mt-2">※未来の日付で登録すれば、上のグラフにも反映されます</p>}
       </div>
 
-      {/* 表示切替＆リスト・カレンダー */}
       <div className="mx-4">
         <div className="flex bg-gray-200 p-1 rounded-lg mb-4">
           <button onClick={() => setViewMode('list')} className={`flex-1 py-1 rounded-md text-sm font-bold ${viewMode === 'list' ? 'bg-white shadow' : 'text-gray-500'}`}>📜 リスト</button>
