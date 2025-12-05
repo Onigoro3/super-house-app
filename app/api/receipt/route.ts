@@ -2,65 +2,65 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// APIキーの確認
-if (!process.env.GEMINI_API_KEY) {
-  console.error("エラー: GEMINI_API_KEY が設定されていません");
-}
-
+if (!process.env.GEMINI_API_KEY) console.error("APIキーがありません");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
 export async function POST(req: Request) {
   try {
-    const { imageBase64 } = await req.json();
-
-    // Base64のヘッダー(data:image/jpeg;base64,など)を削除してデータ部分だけにする
+    // modeを受け取る ('stock' | 'money')
+    const { imageBase64, mode } = await req.json();
     const base64Data = imageBase64.split(',')[1];
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
-    // 画像認識に対応したモデルを使用
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" }); 
-    // ※もし2.0でエラーが出たら gemini-1.5-flash に変えてください
+    let prompt = "";
 
-    const prompt = `
-      この画像を解析して、購入された（または写っている）「食材・日用品リスト」をJSON形式で抽出してください。
-      
-      【ルール】
-      - レシートの場合は「商品名」と「個数」を読み取ってください。
-      - 冷蔵庫の写真の場合は「食材名」を認識してください。
-      - 割引、合計金額、店名などの情報は不要です。
-      - 商品名は一般的な名称に変換してください（例：「国産豚コマ」→「豚こま肉」）。
-      - カテゴリーは以下から最も適切なものを選んでください:
-        - food: 食品（肉、野菜、卵、加工食品など）
-        - seasoning: 調味料（醤油、油、塩、マヨネーズ、ドレッシングなど）
-        - other: 日用品（洗剤、ペーパー、ラップ、ゴミ袋など）
+    if (mode === 'money') {
+      // ★家計簿モードの指示書
+      prompt = `
+        このレシート（または請求書）画像を解析して、家計簿データを抽出してください。
+        
+        【抽出ルール】
+        - 「店名（またはサービス名）」と「合計金額」と「日付」を読み取ってください。
+        - 日付が読み取れない場合は、今日の日付にしてください。
+        - カテゴリは内容から推測して「食費」「日用品」「固定費」「サブスク」「娯楽」「交通費」「その他」から選んでください。
+        - 合計金額だけを1件として抽出してください（個別の商品は不要）。
 
-      出力フォーマット(JSON):
-      [
-        { "name": "キャベツ", "quantity": "1玉", "category": "food" },
-        { "name": "醤油", "quantity": "1本", "category": "seasoning" }
-      ]
-    `;
+        出力フォーマット(JSON):
+        [
+          { "name": "セブンイレブン", "price": 850, "date": "2023-12-01", "category": "食費" }
+        ]
+      `;
+    } else {
+      // ★食材在庫モードの指示書（既存）
+      prompt = `
+        この画像を解析して、購入された（または写っている）「食材・日用品リスト」をJSON形式で抽出してください。
+        
+        【ルール】
+        - レシートの場合は「商品名」と「個数」を読み取ってください。
+        - 商品名は一般的な名称に変換してください（例：「国産豚コマ」→「豚こま肉」）。
+        - カテゴリーは: food, seasoning, other から選択。
+
+        出力フォーマット(JSON):
+        [
+          { "name": "キャベツ", "quantity": "1玉", "category": "food" }
+        ]
+      `;
+    }
 
     const result = await model.generateContent([
       prompt,
-      {
-        inlineData: {
-          data: base64Data,
-          mimeType: "image/jpeg",
-        },
-      },
+      { inlineData: { data: base64Data, mimeType: "image/jpeg" } },
     ]);
 
     const response = await result.response;
     const text = response.text();
-    
-    // JSON部分を抽出
     const jsonStr = text.match(/\[[\s\S]*\]/)?.[0] || "[]";
     const data = JSON.parse(jsonStr);
 
     return NextResponse.json(data);
 
   } catch (error: any) {
-    console.error("Receipt Analysis Error:", error);
+    console.error("Receipt Error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
