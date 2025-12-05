@@ -8,7 +8,7 @@ type Expense = {
   name: string;
   price: number;
   date: string;
-  category: string; // カテゴリ追加
+  category: string;
 };
 
 export default function MoneyList() {
@@ -16,8 +16,9 @@ export default function MoneyList() {
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
   const [date, setDate] = useState('');
-  const [category, setCategory] = useState('固定費'); // デフォルト
+  const [category, setCategory] = useState('固定費');
   const [loading, setLoading] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
 
   // データ読み込み
   const fetchExpenses = async () => {
@@ -37,33 +38,12 @@ export default function MoneyList() {
   // 登録処理
   const addExpense = async () => {
     if (!name || !price) return alert("名称と金額を入力してください");
-    
     setLoading(true);
     try {
-      const { error } = await supabase.from('expenses').insert([
-        { 
-          name, 
-          price: parseInt(price), 
-          date: date || '毎月', 
-          category 
-        }
-      ]);
-
+      const { error } = await supabase.from('expenses').insert([{ name, price: parseInt(price), date: date || '毎月', category }]);
       if (error) throw error;
-
-      // 成功したらリセットして再読み込み
-      setName('');
-      setPrice('');
-      setDate('');
-      fetchExpenses();
-      alert("登録しました！");
-
-    } catch (e: any) {
-      console.error(e);
-      alert(`登録エラー: ${e.message}`);
-    } finally {
-      setLoading(false);
-    }
+      setName(''); setPrice(''); setDate(''); fetchExpenses(); alert("登録しました！");
+    } catch (e: any) { console.error(e); alert(`登録エラー: ${e.message}`); } finally { setLoading(false); }
   };
 
   // 削除処理
@@ -76,52 +56,136 @@ export default function MoneyList() {
   // 合計計算
   const total = expenses.reduce((sum, item) => sum + item.price, 0);
 
+  // ★ CSV出力機能
+  const exportCSV = () => {
+    const header = "名称,カテゴリ,支払日,金額\n";
+    const rows = expenses.map(e => `"${e.name}","${e.category}","${e.date}",${e.price}`).join("\n");
+    const csvContent = "\uFEFF" + header + rows; // BOM付きで文字化け防止
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = "資産管理データ.csv";
+    link.click();
+  };
+
+  // ★ PDF出力機能
+  const exportPDF = async () => {
+    setIsExporting(true);
+    try {
+      // ライブラリの読み込み
+      const { PDFDocument, rgb, StandardFonts } = await import('pdf-lib');
+      const fontkit = (await import('@pdf-lib/fontkit')).default;
+
+      const pdfDoc = await PDFDocument.create();
+      pdfDoc.registerFontkit(fontkit);
+
+      // フォント読み込み（public/fonts/gothic.ttf）
+      let customFont;
+      try {
+        const fontBytes = await fetch(window.location.origin + '/fonts/gothic.ttf').then(res => res.arrayBuffer());
+        customFont = await pdfDoc.embedFont(fontBytes);
+      } catch (e) {
+        alert("日本語フォントの読み込みに失敗しました。");
+        customFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      }
+
+      let page = pdfDoc.addPage([595, 842]); // A4
+      const { height } = page.getSize();
+      let y = height - 50;
+      const fontSize = 12;
+
+      // タイトル
+      page.drawText('資産管理レポート', { x: 50, y, size: 20, font: customFont, color: rgb(0, 0, 0) });
+      y -= 30;
+      page.drawText(`合計支出: ¥${total.toLocaleString()}`, { x: 50, y, size: 16, font: customFont, color: rgb(0.9, 0.3, 0) });
+      y -= 40;
+
+      // ヘッダー
+      page.drawText('支払日', { x: 50, y, size: 10, font: customFont, color: rgb(0.5, 0.5, 0.5) });
+      page.drawText('カテゴリ', { x: 120, y, size: 10, font: customFont, color: rgb(0.5, 0.5, 0.5) });
+      page.drawText('名称', { x: 200, y, size: 10, font: customFont, color: rgb(0.5, 0.5, 0.5) });
+      page.drawText('金額', { x: 450, y, size: 10, font: customFont, color: rgb(0.5, 0.5, 0.5) });
+      y -= 5;
+      page.drawLine({ start: { x: 50, y }, end: { x: 545, y }, thickness: 1, color: rgb(0.8, 0.8, 0.8) });
+      y -= 20;
+
+      // リスト描画
+      for (const item of expenses) {
+        if (y < 50) { // ページが足りなくなったら追加
+          page = pdfDoc.addPage([595, 842]);
+          y = height - 50;
+        }
+
+        page.drawText(item.date, { x: 50, y, size: fontSize, font: customFont });
+        page.drawText(item.category, { x: 120, y, size: fontSize, font: customFont });
+        // 長い名前はカット
+        const safeName = item.name.length > 15 ? item.name.substring(0, 15) + '...' : item.name;
+        page.drawText(safeName, { x: 200, y, size: fontSize, font: customFont });
+        page.drawText(`¥${item.price.toLocaleString()}`, { x: 450, y, size: fontSize, font: customFont });
+        
+        y -= 25;
+      }
+
+      const pdfBytes = await pdfDoc.save();
+      const blob = new Blob([pdfBytes as any], { type: 'application/pdf' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = "資産管理レポート.pdf";
+      link.click();
+
+    } catch (e: any) {
+      console.error(e);
+      alert("PDF作成中にエラーが発生しました");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   return (
     <div className="p-4 space-y-6 pb-24">
-      {/* 合計カード */}
-      <div className="bg-gradient-to-r from-yellow-500 to-orange-500 p-6 rounded-2xl text-white shadow-lg text-center">
-        <p className="text-sm opacity-90 mb-1">毎月の固定費・支出合計</p>
-        <p className="text-4xl font-bold tracking-tight">¥{total.toLocaleString()}</p>
+      {/* 合計カード & 出力ボタン */}
+      <div className="bg-gradient-to-r from-yellow-500 to-orange-500 p-6 rounded-2xl text-white shadow-lg">
+        <div className="text-center mb-4">
+          <p className="text-sm opacity-90 mb-1">毎月の固定費・支出合計</p>
+          <p className="text-4xl font-bold tracking-tight">¥{total.toLocaleString()}</p>
+        </div>
+        
+        {/* 出力ボタンエリア */}
+        <div className="flex gap-3 justify-center mt-2">
+          <button 
+            onClick={exportCSV} 
+            className="bg-white/20 hover:bg-white/30 border border-white/40 text-white px-4 py-1.5 rounded-full text-sm font-bold transition flex items-center gap-1"
+          >
+            📄 CSV出力
+          </button>
+          <button 
+            onClick={exportPDF} 
+            disabled={isExporting}
+            className="bg-white/20 hover:bg-white/30 border border-white/40 text-white px-4 py-1.5 rounded-full text-sm font-bold transition flex items-center gap-1"
+          >
+            {isExporting ? '作成中...' : '📑 PDF出力'}
+          </button>
+        </div>
       </div>
 
       {/* 入力フォーム */}
       <div className="bg-white p-4 rounded-xl border shadow-sm space-y-3">
         <h3 className="font-bold text-gray-700">支出の追加</h3>
         <div className="flex flex-col gap-2">
-          <input 
-            type="text" value={name} onChange={e => setName(e.target.value)} 
-            placeholder="名称 (例: 家賃、Netflix)" 
-            className="border p-2 rounded text-black" 
-          />
+          <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="名称 (例: 家賃、Netflix)" className="border p-2 rounded text-black" />
           <div className="flex gap-2">
-            <input 
-              type="number" value={price} onChange={e => setPrice(e.target.value)} 
-              placeholder="金額" 
-              className="border p-2 rounded text-black flex-1" 
-            />
-            <input 
-              type="text" value={date} onChange={e => setDate(e.target.value)} 
-              placeholder="支払日 (例: 25日)" 
-              className="border p-2 rounded text-black w-1/3" 
-            />
+            <input type="number" value={price} onChange={e => setPrice(e.target.value)} placeholder="金額" className="border p-2 rounded text-black flex-1" />
+            <input type="text" value={date} onChange={e => setDate(e.target.value)} placeholder="支払日 (例: 25日)" className="border p-2 rounded text-black w-1/3" />
           </div>
-          {/* カテゴリ選択 */}
-          <select 
-            value={category} 
-            onChange={e => setCategory(e.target.value)}
-            className="border p-2 rounded text-black bg-gray-50"
-          >
-            <option value="固定費">🏠 固定費 (家賃・光熱費)</option>
+          <select value={category} onChange={e => setCategory(e.target.value)} className="border p-2 rounded text-black bg-gray-50">
+            <option value="固定費">🏠 固定費</option>
             <option value="サブスク">📱 サブスク</option>
-            <option value="ローン">💳 ローン・返済</option>
+            <option value="ローン">💳 ローン</option>
             <option value="その他">✨ その他</option>
           </select>
         </div>
-        <button 
-          onClick={addExpense} 
-          disabled={loading}
-          className="w-full bg-yellow-500 text-white py-2 rounded-lg font-bold hover:bg-yellow-600 shadow"
-        >
+        <button onClick={addExpense} disabled={loading} className="w-full bg-yellow-500 text-white py-2 rounded-lg font-bold hover:bg-yellow-600 shadow">
           {loading ? '登録中...' : '登録する'}
         </button>
       </div>
