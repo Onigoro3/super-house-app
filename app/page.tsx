@@ -27,16 +27,18 @@ export default function Launcher() {
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-gray-900 text-white">Loading...</div>;
   if (!session) return <Auth onLogin={() => {}} />;
 
+// app/page.tsx
   const apps = [
-    { name: 'AI献立アプリ', icon: '🍳', color: 'bg-orange-400', link: '/house', desc: '在庫・献立' },
+    { name: 'AI献立アプリ', icon: '🍳', color: 'bg-orange-400', link: '/house', desc: '在庫・献立・レシピ' },
+    
+    // ★追加: お出かけプランナー
+    { name: 'お出かけ', icon: '✈', color: 'bg-teal-500', link: '/travel', desc: 'AI旅行計画' },
+    
     { name: 'PDF編集', icon: '📄', color: 'bg-red-500', link: '/pdf', desc: '編集・作成' },
     { name: '書類管理', icon: '🗂️', color: 'bg-blue-500', link: '/documents', desc: '保存・整理' },
     
-    // ★追加: 資産管理を独立
     { name: '資産管理', icon: '💰', color: 'bg-yellow-500', link: '/money', desc: '家計簿' },
-
-    { name: 'チャットAI', icon: '🤖', color: 'bg-purple-500', link: '/chat', desc: '執事とお喋り' },
-    { name: '天気', icon: '☀', color: 'bg-cyan-400', link: '/weather', desc: '天気予報' },
+    // ...
     
     { name: 'ToDo', icon: '✅', color: 'bg-green-500', link: '#', desc: '準備中' },
     { name: 'カレンダー', icon: '📅', color: 'bg-sky-500', link: '#', desc: '準備中' },
