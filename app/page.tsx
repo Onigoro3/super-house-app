@@ -41,6 +41,7 @@ export default function Launcher() {
     { name: '資産管理', icon: '💰', color: 'bg-yellow-500', link: '/money', desc: '家計簿' },
     { name: 'チャットAI', icon: '🤖', color: 'bg-purple-500', link: '/chat', desc: '執事とお喋り' },
     { name: '天気', icon: '☀', color: 'bg-cyan-400', link: '/weather', desc: '天気予報' },
+    { name: 'メモ帳', icon: '📝', color: 'bg-yellow-400', link: '/memo', desc: 'AIマインドマップ' },
     
     // ダミーアプリ
     { name: 'ToDo', icon: '✅', color: 'bg-green-500', link: '#', desc: '準備中' },
