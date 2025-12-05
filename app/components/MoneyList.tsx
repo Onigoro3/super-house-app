@@ -33,11 +33,12 @@ export default function MoneyList() {
   const [mode, setMode] = useState<'expense' | 'income'>('expense');
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
   const [showMenu, setShowMenu] = useState(false);
+  // ★追加：年間推移の開閉状態
+  const [showYearly, setShowYearly] = useState(false);
 
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [incomes, setIncomes] = useState<Income[]>([]);
   
-  // 入力フォーム
   const [formName, setFormName] = useState('');
   const [formAmount, setFormAmount] = useState('');
   const [formDate, setFormDate] = useState('');
@@ -45,17 +46,15 @@ export default function MoneyList() {
   const [formCategory, setFormCategory] = useState('食費');
 
   const [currentMonth, setCurrentMonth] = useState(new Date());
-  const [budget, setBudget] = useState(50000);
   const [loading, setLoading] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
 
   const fetchData = async () => {
     const { data: exp } = await supabase.from('expenses').select('*').order('date', { ascending: false });
     const { data: inc } = await supabase.from('incomes').select('*').order('date', { ascending: false });
     if (exp) setExpenses(exp);
     if (inc) setIncomes(inc);
-    const savedBudget = localStorage.getItem('monthly_budget');
-    if (savedBudget) setBudget(parseInt(savedBudget));
   };
 
   useEffect(() => {
@@ -91,7 +90,6 @@ export default function MoneyList() {
     fetchData();
   };
 
-  // レシート解析
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return; setIsAnalyzing(true);
     const reader = new FileReader();
@@ -106,16 +104,15 @@ export default function MoneyList() {
     reader.readAsDataURL(file);
   };
 
-  // カレンダー操作
   const changeMonth = (offset: number) => {
     const newDate = new Date(currentMonth);
     newDate.setMonth(newDate.getMonth() + offset);
     setCurrentMonth(newDate);
   };
 
-  // --- データ計算ロジック ---
+  // --- データ計算 ---
   
-  // 1. カレンダー用データ（日別）
+  // カレンダーデータ生成
   const getCalendarData = () => {
     const year = currentMonth.getFullYear();
     const month = currentMonth.getMonth() + 1;
@@ -130,27 +127,19 @@ export default function MoneyList() {
     return calendar;
   };
 
-  // 2. 年間サマリーデータ（月別）
+  // 年間サマリーデータ
   const getYearlySummary = () => {
     const year = currentMonth.getFullYear();
     const summary = [];
-    // 最大値を計算してグラフの高さを決めるため
     let maxAmount = 0;
-
     for (let m = 1; m <= 12; m++) {
       const monthPrefix = `${year}-${String(m).padStart(2, '0')}`;
-      
-      // 収入（今月のもの）
       const monthInc = incomes.filter(i => i.date.startsWith(monthPrefix)).reduce((sum, i) => sum + i.amount, 0);
-      
-      // 支出（今月の変動費 ＋ 毎月の固定費）
       const monthExpOneTime = expenses.filter(e => !e.is_recurring && e.date.startsWith(monthPrefix)).reduce((sum, e) => sum + e.price, 0);
       const monthExpRecurring = expenses.filter(e => e.is_recurring).reduce((sum, e) => sum + e.price, 0);
       const totalExp = monthExpOneTime + monthExpRecurring;
-
       if (monthInc > maxAmount) maxAmount = monthInc;
       if (totalExp > maxAmount) maxAmount = totalExp;
-
       summary.push({ month: m, income: monthInc, expense: totalExp, balance: monthInc - totalExp });
     }
     return { data: summary, max: maxAmount };
@@ -162,11 +151,118 @@ export default function MoneyList() {
   const monthBalance = monthTotalInc - monthTotalExp;
   const yearlySummary = getYearlySummary();
 
+  // ★円グラフ用データ作成
+  const categoryTotals = currentMonthData.reduce((acc, day) => {
+    day.expenses.forEach(e => {
+      acc[e.category] = (acc[e.category] || 0) + e.price;
+    });
+    return acc;
+  }, {} as Record<string, number>);
+
+  let currentDeg = 0;
+  const pieChartGradient = Object.entries(categoryTotals).map(([cat, amount]) => {
+    const deg = (amount / monthTotalExp) * 360;
+    const color = EXP_COLORS[cat] || '#999';
+    const str = `${color} ${currentDeg}deg ${currentDeg + deg}deg`;
+    currentDeg += deg;
+    return str;
+  }).join(', ');
+
   const currentCategories = mode === 'expense' ? Object.keys(EXP_COLORS) : Object.keys(INC_COLORS);
+
+  // ★ PDF出力機能（年間推移対応）
+  const exportPDF = async () => {
+    setIsExporting(true);
+    try {
+      const { PDFDocument, rgb, StandardFonts } = await import('pdf-lib');
+      const fontkit = (await import('@pdf-lib/fontkit')).default;
+      const pdfDoc = await PDFDocument.create();
+      pdfDoc.registerFontkit(fontkit);
+
+      // フォント読み込み
+      let customFont;
+      try {
+        const fontBytes = await fetch(window.location.origin + '/fonts/gothic.ttf').then(res => res.arrayBuffer());
+        customFont = await pdfDoc.embedFont(fontBytes);
+      } catch (e) {
+        customFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      }
+
+      // 1ページ目：月間リスト
+      let page = pdfDoc.addPage([595, 842]);
+      const { height } = page.getSize();
+      let y = height - 50;
+      const fontSize = 12;
+
+      page.drawText(`${currentMonth.getFullYear()}年${currentMonth.getMonth()+1}月 収支レポート`, { x: 50, y, size: 20, font: customFont, color: rgb(0, 0, 0) });
+      y -= 30;
+      page.drawText(`収入: ¥${monthTotalInc.toLocaleString()}   支出: ¥${monthTotalExp.toLocaleString()}   残高: ¥${monthBalance.toLocaleString()}`, { x: 50, y, size: 14, font: customFont, color: rgb(0.2, 0.2, 0.2) });
+      y -= 40;
+
+      // ヘッダー
+      page.drawText('日付', { x: 50, y, size: 10, font: customFont });
+      page.drawText('内容', { x: 120, y, size: 10, font: customFont });
+      page.drawText('カテゴリ', { x: 300, y, size: 10, font: customFont });
+      page.drawText('金額', { x: 450, y, size: 10, font: customFont });
+      y -= 15;
+      page.drawLine({ start: { x: 50, y }, end: { x: 550, y }, thickness: 1 });
+      y -= 20;
+
+      // 日々の明細を出力
+      currentMonthData.forEach(day => {
+         day.incomes.forEach(inc => {
+            if (y < 50) { page = pdfDoc.addPage([595, 842]); y = height - 50; }
+            page.drawText(`${day.day}日`, { x: 50, y, size: 10, font: customFont });
+            page.drawText(inc.name, { x: 120, y, size: 10, font: customFont });
+            page.drawText(inc.category, { x: 300, y, size: 10, font: customFont });
+            page.drawText(`+¥${inc.amount.toLocaleString()}`, { x: 450, y, size: 10, font: customFont, color: rgb(0, 0, 1) });
+            y -= 20;
+         });
+         day.expenses.forEach(exp => {
+            if (y < 50) { page = pdfDoc.addPage([595, 842]); y = height - 50; }
+            page.drawText(`${day.day}日`, { x: 50, y, size: 10, font: customFont });
+            page.drawText(exp.name, { x: 120, y, size: 10, font: customFont });
+            page.drawText(exp.category, { x: 300, y, size: 10, font: customFont });
+            page.drawText(`-¥${exp.price.toLocaleString()}`, { x: 450, y, size: 10, font: customFont, color: rgb(1, 0, 0) });
+            y -= 20;
+         });
+      });
+
+      // ★ 2ページ目：年間推移サマリー
+      const summaryPage = pdfDoc.addPage([595, 842]);
+      let sy = height - 50;
+      summaryPage.drawText(`${currentMonth.getFullYear()}年 年間収支サマリー`, { x: 50, y: sy, size: 20, font: customFont });
+      sy -= 40;
+
+      // 表ヘッダー
+      summaryPage.drawText('月', { x: 50, y: sy, size: 12, font: customFont });
+      summaryPage.drawText('収入', { x: 150, y: sy, size: 12, font: customFont });
+      summaryPage.drawText('支出', { x: 300, y: sy, size: 12, font: customFont });
+      summaryPage.drawText('収支差', { x: 450, y: sy, size: 12, font: customFont });
+      sy -= 15;
+      summaryPage.drawLine({ start: { x: 50, y: sy }, end: { x: 550, y: sy }, thickness: 1 });
+      sy -= 20;
+
+      yearlySummary.data.forEach(m => {
+        summaryPage.drawText(`${m.month}月`, { x: 50, y: sy, size: 12, font: customFont });
+        summaryPage.drawText(`¥${m.income.toLocaleString()}`, { x: 150, y: sy, size: 12, font: customFont, color: rgb(0, 0, 1) });
+        summaryPage.drawText(`¥${m.expense.toLocaleString()}`, { x: 300, y: sy, size: 12, font: customFont, color: rgb(1, 0, 0) });
+        summaryPage.drawText(`¥${m.balance.toLocaleString()}`, { x: 450, y: sy, size: 12, font: customFont });
+        sy -= 25;
+      });
+
+      const pdfBytes = await pdfDoc.save();
+      const blob = new Blob([pdfBytes as any], { type: 'application/pdf' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `kakeibo_${currentMonth.getFullYear()}_${currentMonth.getMonth()+1}.pdf`;
+      link.click();
+
+    } catch (e) { console.error(e); alert('PDF作成エラー'); } finally { setIsExporting(false); }
+  };
 
   return (
     <div className="relative min-h-screen pb-24">
-      
       {/* サイドメニュー */}
       {showMenu && (
         <div className="fixed inset-0 z-50 flex">
@@ -175,6 +271,7 @@ export default function MoneyList() {
             <h2 className="font-bold text-xl mb-6 text-gray-800">メニュー</h2>
             <button onClick={() => { setMode('expense'); setFormCategory('食費'); setShowMenu(false); }} className={`p-3 rounded-lg font-bold text-left mb-2 ${mode === 'expense' ? 'bg-red-50 text-red-600' : 'text-gray-600'}`}>📤 支出管理</button>
             <button onClick={() => { setMode('income'); setFormCategory('給料'); setShowMenu(false); }} className={`p-3 rounded-lg font-bold text-left mb-2 ${mode === 'income' ? 'bg-blue-50 text-blue-600' : 'text-gray-600'}`}>📥 収入管理</button>
+            <button onClick={exportPDF} disabled={isExporting} className="p-3 rounded-lg font-bold text-left mb-2 bg-green-50 text-green-700 mt-4">{isExporting ? '作成中...' : '📑 PDF出力'}</button>
           </div>
         </div>
       )}
@@ -182,63 +279,77 @@ export default function MoneyList() {
       {/* ヘッダー */}
       <div className="flex justify-between items-center mb-4 p-4 bg-white shadow-sm sticky top-0 z-10">
         <button onClick={() => setShowMenu(true)} className="p-2 bg-gray-100 rounded-lg text-gray-600">☰</button>
-        <h1 className="font-bold text-gray-800">{currentMonth.getFullYear()}年の収支</h1>
+        <h1 className="font-bold text-gray-800">{currentMonth.getFullYear()}年 {currentMonth.getMonth() + 1}月</h1>
         <div className={`px-3 py-1 rounded-full font-bold text-xs ${mode === 'expense' ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>{mode === 'expense' ? '支出' : '収入'}</div>
       </div>
 
-      {/* ★ 年間サマリーグラフ（横スクロール） */}
-      <div className="px-4 mb-6">
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
-          <h3 className="text-xs font-bold text-gray-400 mb-3 sticky left-0">年間推移 (1月〜12月)</h3>
-          <div className="flex gap-3 min-w-max items-end h-40 pb-6">
-            {yearlySummary.data.map((m) => {
-              const incHeight = m.income > 0 ? (m.income / yearlySummary.max) * 100 : 0;
-              const expHeight = m.expense > 0 ? (m.expense / yearlySummary.max) * 100 : 0;
-              const isCurrent = m.month === currentMonth.getMonth() + 1;
-              
-              return (
-                <div key={m.month} className={`flex flex-col items-center justify-end h-full w-12 relative ${isCurrent ? 'bg-gray-50 rounded-lg -mx-1 px-1 pt-1' : ''}`}>
-                  {/* 数値ラベル（残高） */}
-                  <span className={`text-[9px] font-bold mb-1 ${m.balance >= 0 ? 'text-black' : 'text-red-500'}`}>
-                    {m.balance > 0 ? '+' : ''}{Math.round(m.balance / 1000)}k
-                  </span>
-                  
-                  {/* グラフバー */}
-                  <div className="w-full flex gap-0.5 items-end h-20">
-                    <div className="w-1/2 bg-blue-400 rounded-t-sm transition-all duration-500" style={{ height: `${incHeight}%` }}></div>
-                    <div className="w-1/2 bg-red-400 rounded-t-sm transition-all duration-500" style={{ height: `${expHeight}%` }}></div>
-                  </div>
-                  
-                  {/* 月ラベル */}
-                  <span className={`text-xs mt-2 font-bold ${isCurrent ? 'text-indigo-600' : 'text-gray-400'}`}>{m.month}月</span>
-                </div>
-              );
-            })}
+      {/* ★ 月間サマリー（円グラフ＆収支） */}
+      <div className="px-4 mb-4">
+        <div className="bg-white p-6 rounded-2xl shadow-lg border border-gray-100 flex items-center gap-6">
+          {/* 円グラフ */}
+          <div className="relative w-28 h-28 shrink-0">
+            <div className="w-full h-full rounded-full" style={{ background: monthTotalExp > 0 ? `conic-gradient(${pieChartGradient})` : '#eee' }}></div>
+            <div className="absolute inset-2 bg-white rounded-full flex items-center justify-center flex-col">
+              <span className="text-[10px] text-gray-400">残高</span>
+              <span className={`font-bold ${monthBalance >= 0 ? 'text-blue-600' : 'text-red-500'}`}>¥{monthBalance.toLocaleString()}</span>
+            </div>
+          </div>
+
+          {/* 内訳テキスト */}
+          <div className="flex-1">
+            <div className="flex justify-between text-sm mb-2">
+              <span className="text-blue-500 font-bold">収入</span>
+              <span>¥{monthTotalInc.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between text-sm mb-2">
+              <span className="text-red-500 font-bold">支出</span>
+              <span>¥{monthTotalExp.toLocaleString()}</span>
+            </div>
+            <div className="border-t pt-2 flex justify-between font-bold">
+              <span>収支差</span>
+              <span className={monthBalance >= 0 ? 'text-blue-600' : 'text-red-500'}>{monthBalance >= 0 ? '+' : ''}¥{monthBalance.toLocaleString()}</span>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* 今月の概要 */}
+      {/* ★ 年間推移（折りたたみ式） */}
       <div className="px-4 mb-6">
-        <div className="bg-white p-6 rounded-2xl shadow-lg border border-gray-100">
-          <div className="flex justify-between items-center mb-4">
-            <div className="flex items-center gap-2">
-               <button onClick={() => changeMonth(-1)} className="text-xl text-gray-400">◀</button>
-               <h2 className="font-bold text-gray-700 text-lg">{currentMonth.getMonth()+1}月</h2>
-               <button onClick={() => changeMonth(1)} className="text-xl text-gray-400">▶</button>
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <button onClick={() => setShowYearly(!showYearly)} className="w-full p-3 flex justify-between items-center bg-gray-50 font-bold text-gray-600 text-sm">
+            <span>📅 年間推移 (1月〜12月)</span>
+            <span>{showYearly ? '▲' : '▼'}</span>
+          </button>
+          
+          {showYearly && (
+            <div className="p-4 overflow-x-auto animate-fadeIn">
+              <div className="flex gap-3 min-w-max items-end h-40 pb-6">
+                {yearlySummary.data.map((m) => {
+                  const incHeight = m.income > 0 ? (m.income / yearlySummary.max) * 100 : 0;
+                  const expHeight = m.expense > 0 ? (m.expense / yearlySummary.max) * 100 : 0;
+                  const isCurrent = m.month === currentMonth.getMonth() + 1;
+                  return (
+                    <div key={m.month} className={`flex flex-col items-center justify-end h-full w-12 ${isCurrent ? 'bg-blue-50 rounded' : ''}`}>
+                      <span className={`text-[9px] font-bold mb-1 ${m.balance >= 0 ? 'text-black' : 'text-red-500'}`}>{Math.round(m.balance / 1000)}k</span>
+                      <div className="w-full flex gap-0.5 items-end h-20">
+                        <div className="w-1/2 bg-blue-400 rounded-t-sm transition-all" style={{ height: `${incHeight}%` }}></div>
+                        <div className="w-1/2 bg-red-400 rounded-t-sm transition-all" style={{ height: `${expHeight}%` }}></div>
+                      </div>
+                      <span className={`text-xs mt-2 font-bold ${isCurrent ? 'text-indigo-600' : 'text-gray-400'}`}>{m.month}月</span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            <div className="text-right">
-              <p className="text-xs text-gray-400">今月の残り (収支)</p>
-              <p className={`text-2xl font-bold ${monthBalance >= 0 ? 'text-blue-600' : 'text-red-500'}`}>
-                {monthBalance >= 0 ? '+' : ''}¥{monthBalance.toLocaleString()}
-              </p>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-4 text-center">
-            <div className="bg-blue-50 p-2 rounded-lg"><p className="text-xs text-blue-500">収入</p><p className="font-bold text-blue-700">¥{monthTotalInc.toLocaleString()}</p></div>
-            <div className="bg-red-50 p-2 rounded-lg"><p className="text-xs text-red-500">支出</p><p className="font-bold text-red-700">¥{monthTotalExp.toLocaleString()}</p></div>
-          </div>
+          )}
         </div>
+      </div>
+
+      {/* 月切り替え */}
+      <div className="flex justify-between items-center px-6 mb-4">
+        <button onClick={() => changeMonth(-1)} className="text-2xl text-gray-400">◀</button>
+        <span className="font-bold text-gray-600">{currentMonth.getMonth()+1}月の詳細</span>
+        <button onClick={() => changeMonth(1)} className="text-2xl text-gray-400">▶</button>
       </div>
 
       {/* 入力フォーム */}
@@ -258,7 +369,6 @@ export default function MoneyList() {
           <button onClick={handleSubmit} disabled={loading} className={`flex-1 py-3 rounded-lg font-bold text-white shadow ${mode === 'expense' ? 'bg-red-500' : 'bg-blue-500'}`}>{loading ? '...' : '追加'}</button>
           <label className={`flex items-center justify-center bg-white border px-3 rounded-lg cursor-pointer ${isAnalyzing?'opacity-50':''}`}>📷<input type="file" accept="image/*" capture="environment" onChange={handleImageUpload} className="hidden" disabled={isAnalyzing} /></label>
         </div>
-        {mode === 'income' && <p className="text-xs text-blue-400 text-center mt-2">※未来の日付で登録すれば、上のグラフにも反映されます</p>}
       </div>
 
       {/* 表示切替＆リスト・カレンダー */}
