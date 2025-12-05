@@ -11,45 +11,46 @@ export default function Launcher() {
   const [time, setTime] = useState<string>('');
 
   useEffect(() => {
-    // ログイン状態のチェック
+    // ログインチェック
     supabase.auth.getSession().then(({ data: { session } }) => { setSession(session); setLoading(false); });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => { setSession(session); setLoading(false); });
 
-    // 時計の更新
+    // 時計更新
     const updateTime = () => {
       const now = new Date();
       setTime(`${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`);
     };
-    updateTime(); // 初回実行
-    const timer = setInterval(updateTime, 1000); // 1秒ごとに更新
+    updateTime();
+    const timer = setInterval(updateTime, 1000);
 
     return () => { subscription.unsubscribe(); clearInterval(timer); };
   }, []);
 
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-gray-900 text-white">Loading...</div>;
-  
-  // ログインしていなければログイン画面を表示
   if (!session) return <Auth onLogin={() => {}} />;
 
   // ★アプリ一覧
   const apps = [
     { name: 'AI献立アプリ', icon: '🍳', color: 'bg-orange-400', link: '/house', desc: '在庫・献立' },
+    
+    // ★追加: お出かけプランナー
+    { name: 'お出かけ', icon: '✈', color: 'bg-teal-500', link: '/travel', desc: 'AI旅行計画' },
+    
     { name: 'PDF編集', icon: '📄', color: 'bg-red-500', link: '/pdf', desc: '編集・作成' },
     { name: '書類管理', icon: '🗂️', color: 'bg-blue-500', link: '/documents', desc: '保存・整理' },
     { name: '資産管理', icon: '💰', color: 'bg-yellow-500', link: '/money', desc: '家計簿' },
     { name: 'チャットAI', icon: '🤖', color: 'bg-purple-500', link: '/chat', desc: '執事とお喋り' },
     { name: '天気', icon: '☀', color: 'bg-cyan-400', link: '/weather', desc: '天気予報' },
     
-    // 開発中のダミーアプリ
+    // ダミーアプリ
     { name: 'ToDo', icon: '✅', color: 'bg-green-500', link: '#', desc: '準備中' },
     { name: 'カレンダー', icon: '📅', color: 'bg-sky-500', link: '#', desc: '準備中' },
-    { name: '設定', icon: '⚙', color: 'bg-gray-500', link: '#', desc: 'アカウント設定' },
   ];
 
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6 flex flex-col items-center selection:bg-indigo-500 selection:text-white">
       
-      {/* ヘッダー（時計と挨拶） */}
+      {/* ヘッダー */}
       <div className="w-full max-w-lg mb-12 mt-8 flex justify-between items-end">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Good Morning</h1>
@@ -73,13 +74,13 @@ export default function Launcher() {
         ))}
       </div>
       
-      {/* ドック（画面下のショートカットバー） */}
+      {/* ドック */}
       <div className="fixed bottom-8">
         <div className="bg-white/10 backdrop-blur-xl p-4 rounded-3xl flex gap-6 border border-white/10 shadow-2xl">
           <Link href="/house" className="w-12 h-12 bg-orange-400 rounded-xl flex items-center justify-center text-2xl shadow-lg hover:-translate-y-2 transition-transform duration-300">🍳</Link>
           <Link href="/documents" className="w-12 h-12 bg-blue-500 rounded-xl flex items-center justify-center text-2xl shadow-lg hover:-translate-y-2 transition-transform duration-300">🗂️</Link>
           <Link href="/money" className="w-12 h-12 bg-yellow-500 rounded-xl flex items-center justify-center text-2xl shadow-lg hover:-translate-y-2 transition-transform duration-300">💰</Link>
-          <Link href="/chat" className="w-12 h-12 bg-purple-500 rounded-xl flex items-center justify-center text-2xl shadow-lg hover:-translate-y-2 transition-transform duration-300">🤖</Link>
+          <Link href="/travel" className="w-12 h-12 bg-teal-500 rounded-xl flex items-center justify-center text-2xl shadow-lg hover:-translate-y-2 transition-transform duration-300">✈</Link> {/* ★ドックにも追加 */}
         </div>
       </div>
 
