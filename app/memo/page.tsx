@@ -18,6 +18,7 @@ type Memo = {
   is_folder: boolean;
   parent_id: number | null;
   map_data: any;
+  created_at: string; // ★修正：ここを追加しました
 };
 
 export default function MemoApp() {
@@ -53,7 +54,6 @@ export default function MemoApp() {
         if (data) {
           setMemos(data);
           
-          // ★ここが重要：いきなり開く処理
           // 直近の「メモ（フォルダ以外）」を探す
           const recentMemo = data.find(m => !m.is_folder);
           
@@ -195,7 +195,7 @@ export default function MemoApp() {
       {/* ヘッダー */}
       <header className="bg-gray-900 text-white p-3 flex justify-between items-center shadow-md z-10 shrink-0">
         <div className="flex items-center gap-3">
-          {/* ★三本線メニューボタン */}
+          {/* 三本線メニューボタン */}
           <button onClick={() => setIsSidebarOpen(true)} className="p-2 rounded hover:bg-gray-800">
             <div className="w-5 h-0.5 bg-white mb-1"></div>
             <div className="w-5 h-0.5 bg-white mb-1"></div>
@@ -210,7 +210,7 @@ export default function MemoApp() {
         </div>
       </header>
 
-      {/* ★ メインエリア（エディタ）: 最初から表示される */}
+      {/* メインエリア（エディタ） */}
       <div className="flex-1 flex flex-col relative overflow-hidden">
         {selectedMemo ? (
           <>
@@ -247,7 +247,7 @@ export default function MemoApp() {
         )}
       </div>
 
-      {/* ★ サイドバー（スライドメニュー） */}
+      {/* サイドバー（スライドメニュー） */}
       {isSidebarOpen && (
         <div className="fixed inset-0 z-50 flex">
           <div className="bg-black/50 flex-1" onClick={() => setIsSidebarOpen(false)}></div>
