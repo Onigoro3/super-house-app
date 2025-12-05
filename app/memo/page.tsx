@@ -4,7 +4,12 @@ import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import Auth from '../components/Auth';
-import { ReactFlow, Background, Controls, MiniMap, useNodesState, useEdgesState, addEdge } from '@xyflow/react';
+// ★修正: 型定義を追加インポート
+import { 
+  ReactFlow, Background, Controls, MiniMap, 
+  useNodesState, useEdgesState, addEdge,
+  type Node, type Edge, type Connection 
+} from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
 type Memo = {
@@ -20,12 +25,13 @@ export default function MemoApp() {
   const [session, setSession] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [memos, setMemos] = useState<Memo[]>([]);
-  const [currentFolderId, setCurrentFolderId] = useState<number | null>(null); // 現在のフォルダ
-  const [selectedMemo, setSelectedMemo] = useState<Memo | null>(null); // 開いているメモ
+  const [currentFolderId, setCurrentFolderId] = useState<number | null>(null);
+  const [selectedMemo, setSelectedMemo] = useState<Memo | null>(null);
   
-  // マップ用ステート
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  // ★修正: 型 <Node> と <Edge> を指定して初期化
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  
   const [viewMode, setViewMode] = useState<'text' | 'map'>('text');
   const [isThinking, setIsThinking] = useState(false);
 
@@ -80,21 +86,21 @@ export default function MemoApp() {
   // 保存
   const saveMemo = async () => {
     if (!selectedMemo) return;
-    // マップデータも一緒に保存
     const mapData = { nodes, edges };
     await supabase.from('memos').update({ 
       content: selectedMemo.content,
       title: selectedMemo.title,
       map_data: mapData
     }).eq('id', selectedMemo.id);
-    fetchMemos(); // タイトル変更反映のため
+    fetchMemos(); 
+    alert('保存しました');
   };
 
-  // ★ AI図解生成
+  // AI図解生成
   const generateMap = async () => {
     if (!selectedMemo?.content) return alert("本文がありません");
     setIsThinking(true);
-    setViewMode('map'); // マップモードへ強制移動
+    setViewMode('map');
 
     try {
       const res = await fetch('/api/mindmap', {
@@ -107,15 +113,14 @@ export default function MemoApp() {
       if (data.nodes && data.edges) {
         setNodes(data.nodes);
         setEdges(data.edges);
-        // 保存
         await supabase.from('memos').update({ map_data: data }).eq('id', selectedMemo.id);
       }
     } catch (e) { alert("図解生成に失敗しました"); }
     finally { setIsThinking(false); }
   };
 
-  // ノード接続用
-  const onConnect = useCallback((params: any) => setEdges((eds) => addEdge(params, eds)), [setEdges]);
+  // ノード接続用（★修正: 引数の型指定）
+  const onConnect = useCallback((params: Connection) => setEdges((eds) => addEdge(params, eds)), [setEdges]);
 
   if (loading) return <div>Loading...</div>;
   if (!session) return <Auth onLogin={() => {}} />;
@@ -131,7 +136,7 @@ export default function MemoApp() {
       <div className="flex flex-1 overflow-hidden">
         
         {/* 左サイドバー：ファイルツリー */}
-        <div className="w-64 bg-white border-r flex flex-col">
+        <div className="w-64 bg-white border-r flex flex-col shrink-0">
           <div className="p-3 border-b bg-gray-50">
             <div className="flex gap-2 mb-2">
               <button onClick={() => createItem(false)} className="flex-1 bg-blue-600 text-white py-1 rounded text-sm font-bold hover:bg-blue-700">＋ メモ</button>
@@ -144,7 +149,7 @@ export default function MemoApp() {
                   <span>&gt;</span>
                   <button onClick={() => setCurrentFolderId(parentFolder.parent_id)} className="hover:underline">.. (戻る)</button>
                   <span>&gt;</span>
-                  <span className="font-bold text-gray-800">{parentFolder.title}</span>
+                  <span className="font-bold text-gray-800 truncate max-w-[100px]">{parentFolder.title}</span>
                 </>
               )}
             </div>
@@ -156,7 +161,7 @@ export default function MemoApp() {
               <div key={m.id} className={`flex justify-between items-center p-2 rounded cursor-pointer group ${selectedMemo?.id === m.id ? 'bg-blue-100' : 'hover:bg-gray-100'}`} onClick={() => openMemo(m)}>
                 <div className="flex items-center gap-2 truncate">
                   <span className="text-lg">{m.is_folder ? '📁' : '📝'}</span>
-                  <span className={`text-sm ${m.is_folder ? 'font-bold' : ''}`}>{m.title}</span>
+                  <span className={`text-sm truncate ${m.is_folder ? 'font-bold' : ''}`}>{m.title}</span>
                 </div>
                 <button onClick={(e) => { e.stopPropagation(); deleteItem(m.id); }} className="text-gray-300 hover:text-red-500 text-xs opacity-0 group-hover:opacity-100">🗑️</button>
               </div>
@@ -165,7 +170,7 @@ export default function MemoApp() {
         </div>
 
         {/* メインエリア */}
-        <div className="flex-1 flex flex-col bg-white">
+        <div className="flex-1 flex flex-col bg-white overflow-hidden">
           {selectedMemo ? (
             <>
               {/* ツールバー */}
@@ -173,9 +178,9 @@ export default function MemoApp() {
                 <input 
                   value={selectedMemo.title} 
                   onChange={e => setSelectedMemo({ ...selectedMemo, title: e.target.value })}
-                  className="font-bold text-lg bg-transparent outline-none w-1/2"
+                  className="font-bold text-lg bg-transparent outline-none w-1/3 text-black"
                 />
-                <div className="flex gap-2">
+                <div className="flex gap-2 items-center">
                   <div className="bg-white border rounded flex overflow-hidden">
                     <button onClick={() => setViewMode('text')} className={`px-4 py-1 text-sm font-bold ${viewMode === 'text' ? 'bg-gray-800 text-white' : 'text-gray-600 hover:bg-gray-100'}`}>テキスト</button>
                     <button onClick={() => setViewMode('map')} className={`px-4 py-1 text-sm font-bold ${viewMode === 'map' ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}>ツリー図</button>
@@ -198,7 +203,7 @@ export default function MemoApp() {
                 />
 
                 {/* マップモード (React Flow) */}
-                <div className={`w-full h-full ${viewMode === 'map' ? 'block' : 'hidden'}`}>
+                <div className={`w-full h-full bg-gray-50 ${viewMode === 'map' ? 'block' : 'hidden'}`}>
                   <ReactFlow
                     nodes={nodes}
                     edges={edges}
