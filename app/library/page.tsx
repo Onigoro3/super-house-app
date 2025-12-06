@@ -9,6 +9,7 @@ type BookPage = {
   page_number: number;
   headline: string;
   content: string;
+  image_prompt?: string;
 };
 
 type Book = {
@@ -41,9 +42,12 @@ export default function LibraryApp() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateStatus, setGenerateStatus] = useState('');
 
+  // 読み上げ状態管理
   const [isSpeaking, setIsSpeaking] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [useVoicevox, setUseVoicevox] = useState(true);
+  
+  // 再生中かどうかのフラグ（useEffect内での参照用）
   const isPlayingRef = useRef(false);
 
   const [editingBookId, setEditingBookId] = useState<number | null>(null);
@@ -58,6 +62,19 @@ export default function LibraryApp() {
     return () => stopSpeaking();
   }, []);
 
+  // ★重要：ページが変わった時に、再生中ならそのページを読み上げる
+  useEffect(() => {
+    if (isSpeaking && currentBook) {
+      // 少し待ってから再生（切り替え直後の安定のため）
+      const timer = setTimeout(() => {
+        if (isPlayingRef.current) {
+          playCurrentContent();
+        }
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [currentPageIndex]); // ページ番号が変わるたびに実行
+
   const fetchBooks = async () => {
     const { data } = await supabase.from('books').select('*').order('created_at', { ascending: false });
     if (data) setBooks(data);
@@ -69,7 +86,6 @@ export default function LibraryApp() {
 
   const displayedBooks = filterMode === 'all' ? books : books.filter(b => b.is_favorite);
 
-  // AI生成 (画像なし)
   const generateBook = async () => {
     if (!topic) return alert("テーマを入力してください");
     setIsGenerating(true);
@@ -115,63 +131,10 @@ export default function LibraryApp() {
     finally { setIsGenerating(false); setGenerateStatus(''); }
   };
 
-  // ストック機能
   const uploadToStock = async (e: React.ChangeEvent<HTMLInputElement>) => { const file = e.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = async (ev) => { const text = ev.target?.result as string; if (!text) return; const title = file.name.replace(/\.[^/.]+$/, ""); await supabase.from('raw_texts').insert([{ title, content: text }]); alert('保存しました'); fetchRawTexts(); e.target.value = ''; }; reader.readAsText(file); };
-  
-  // ★テキスト変換ロジック（ハッシュタグ # で見出し分割）
-  const convertStockToBook = async (raw: RawText) => {
-    if (!confirm(`「${raw.title}」を本にしますか？`)) return;
-    
-    const pages: BookPage[] = [];
-    const lines = raw.content.split('\n');
-    let currentPageContent = "";
-    let currentHeadline = raw.title; // 最初の見出しはタイトル
-    let pageNum = 1;
-
-    // 行ごとの解析
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-      
-      // "# " または "## " で始まる行を新しいページの見出しとする
-      if (line.startsWith('#')) {
-        // 前のページがあれば保存
-        if (currentPageContent.trim()) {
-          pages.push({ page_number: pageNum++, headline: currentHeadline, content: currentPageContent.trim() });
-          currentPageContent = "";
-        }
-        // 見出しを更新 (#を削除)
-        currentHeadline = line.replace(/^#+\s*/, '');
-      } else {
-        // 本文に追加
-        currentPageContent += line + "\n";
-        
-        // 文字数が多すぎたら分割（見出しなしで次ページへ）
-        if (currentPageContent.length > 500) {
-           pages.push({ page_number: pageNum++, headline: currentHeadline, content: currentPageContent.trim() });
-           currentPageContent = "";
-           currentHeadline = `(続き) ${currentHeadline}`; // 続きのページ用見出し
-        }
-      }
-    }
-    // 最後のページを保存
-    if (currentPageContent.trim()) {
-      pages.push({ page_number: pageNum++, headline: currentHeadline, content: currentPageContent.trim() });
-    }
-
-    // もし#がなくてページが1つもなければ、強制的に1ページ作成
-    if (pages.length === 0) {
-       // 単純分割
-       const chars = 300; let p=1;
-       for(let i=0;i<raw.content.length;i+=chars){ pages.push({page_number:p,headline:p===1?raw.title:`ページ ${p}`,content:raw.content.substring(i,i+chars).trim()}); p++; }
-    }
-
-    const { error } = await supabase.from('books').insert([{ title: raw.title, topic: 'インポート', pages, current_page: 0 }]);
-    if (!error) { alert('本棚に追加しました！'); fetchBooks(); setView('shelf'); } else { alert('作成失敗'); }
-  };
-
+  const convertStockToBook = async (raw: RawText) => { if (!confirm(`「${raw.title}」を本にしますか？`)) return; const chars=300; const pages=[]; let p=1; for(let i=0;i<raw.content.length;i+=chars){ pages.push({page_number:p,headline:p===1?raw.title:`ページ ${p}`,content:raw.content.substring(i,i+chars).trim()}); p++; } await supabase.from('books').insert([{ title:raw.title, topic:'インポート', pages, current_page: 0 }]); alert('本棚に追加しました'); fetchBooks(); setView('shelf'); };
   const deleteStock = async (id: number) => { if(!confirm("削除しますか？")) return; await supabase.from('raw_texts').delete().eq('id', id); fetchRawTexts(); };
 
-  // 本の操作
   const openBook = (book: Book) => {
     setCurrentBook(book);
     const startPage = book.current_page || 0;
@@ -185,27 +148,82 @@ export default function LibraryApp() {
   const saveTitle = async (id: number) => { if (!editTitleText.trim()) return; await supabase.from('books').update({ title: editTitleText }).eq('id', id); setEditingBookId(null); fetchBooks(); };
   const toggleFavorite = async (id: number, current: boolean, e: React.MouseEvent) => { e.stopPropagation(); setBooks(prev => prev.map(b => b.id === id ? { ...b, is_favorite: !current } : b)); await supabase.from('books').update({ is_favorite: !current }).eq('id', id); };
 
-  // 読み上げ
+  // --- 読み上げロジック ---
   const cleanText = (text: string) => text.replace(/[#*_\-`]/g, '').replace(/\n/g, ' ').trim();
-  const speakStandard = (text: string, onEnd: () => void) => { if (typeof window === 'undefined') return; window.speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = 'ja-JP'; u.rate = 1.0; u.onend = onEnd; window.speechSynthesis.speak(u); };
+
+  // 再生終了時の処理（次のページへ）
+  const handleAudioEnd = () => {
+    if (!isPlayingRef.current || !currentBook) return;
+    
+    if (currentPageIndex < currentBook.pages.length - 1) {
+      // ページ番号を更新（→ useEffectが検知して次の再生を開始する）
+      setCurrentPageIndex(prev => prev + 1);
+    } else {
+      // 最後まで読んだら停止
+      stopSpeaking();
+    }
+  };
+
+  const speakStandard = (text: string) => {
+    if (typeof window === 'undefined') return;
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'ja-JP';
+    u.rate = 1.0;
+    u.onend = handleAudioEnd; // 終わったら次へ
+    window.speechSynthesis.speak(u);
+  };
   
-  const speakCurrentPage = async () => {
+  // 現在のページの内容を再生する関数
+  const playCurrentContent = async () => {
     if (!currentBook) return;
     const page = currentBook.pages[currentPageIndex];
-    // ★見出しも含めて読む
+    // 見出しを含めて読む
     const text = cleanText(`${page.headline}。\n${page.content}`);
     
-    setIsSpeaking(true); isPlayingRef.current = true;
-    const handleNext = () => { if (!isPlayingRef.current) return; if (currentPageIndex < currentBook.pages.length - 1) { setTimeout(() => { if (isPlayingRef.current) changePage(currentPageIndex + 1, true); }, 1000); } else { stopSpeaking(); } };
-    if (useVoicevox) { try { const url = `https://api.tts.quest/v3/voicevox/synthesis?text=${encodeURIComponent(text)}&speaker=2`; if (audioRef.current) { audioRef.current.src = url; await audioRef.current.play(); audioRef.current.onended = handleNext; audioRef.current.onerror = () => { console.warn("VOICEVOX Error"); speakStandard(text, handleNext); }; } } catch (e) { speakStandard(text, handleNext); } } else { speakStandard(text, handleNext); }
+    if (useVoicevox) {
+      try {
+        const url = `https://api.tts.quest/v3/voicevox/synthesis?text=${encodeURIComponent(text)}&speaker=2`;
+        if (audioRef.current) {
+          audioRef.current.src = url;
+          await audioRef.current.play();
+          audioRef.current.onended = handleAudioEnd; // 終わったら次へ
+          audioRef.current.onerror = () => { 
+            console.warn("VOICEVOX Error, fallback to standard");
+            speakStandard(text); 
+          };
+        }
+      } catch (e) {
+        speakStandard(text);
+      }
+    } else {
+      speakStandard(text);
+    }
   };
-  const stopSpeaking = () => { isPlayingRef.current = false; setIsSpeaking(false); if (audioRef.current) { audioRef.current.pause(); audioRef.current.currentTime = 0; } if (typeof window !== 'undefined') window.speechSynthesis.cancel(); };
-  const toggleSpeak = () => { if (isSpeaking) stopSpeaking(); else { setIsSpeaking(true); isPlayingRef.current = true; speakCurrentPage(); } };
+
+  const stopSpeaking = () => {
+    isPlayingRef.current = false;
+    setIsSpeaking(false);
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current.currentTime = 0; }
+    if (typeof window !== 'undefined') window.speechSynthesis.cancel();
+  };
+
+  const toggleSpeak = () => {
+    if (isSpeaking) {
+      stopSpeaking();
+    } else {
+      setIsSpeaking(true);
+      isPlayingRef.current = true;
+      playCurrentContent(); // 再生開始
+    }
+  };
   
-  const changePage = (newIndex: number, autoPlay = false) => {
-    stopSpeaking(); setCurrentPageIndex(newIndex);
+  // 手動でページをめくった時
+  const changePage = (newIndex: number) => {
+    // 手動操作時は読み上げを止める
+    stopSpeaking();
+    setCurrentPageIndex(newIndex);
     if (currentBook) saveBookmark(currentBook.id, newIndex);
-    if (autoPlay && currentBook) { setIsSpeaking(true); setTimeout(() => { const page = currentBook.pages[newIndex]; if (page) speakCurrentPage(); }, 500); }
   };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-amber-50">Loading...</div>;
@@ -237,7 +255,7 @@ export default function LibraryApp() {
       {/* ヘッダー */}
       <header className="bg-amber-900 text-white p-4 shadow-md flex justify-between items-center z-10 shrink-0">
         <div className="flex items-center gap-4">
-          <Link href="/" className="bg-amber-800 hover:bg-amber-700 px-4 py-2 rounded-lg font-bold text-sm transition">🔙 ホーム</Link>
+          <Link href="/" className="bg-amber-800 hover:bg-amber-700 px-3 py-1 rounded-lg font-bold text-xs transition">🔙 ホーム</Link>
           <h1 className="text-xl font-bold">{view === 'stock' ? '📂 ストック' : (filterMode === 'all' ? '📚 AIライブラリ' : '❤ お気に入り')}</h1>
         </div>
         {view === 'read' ? (
@@ -248,7 +266,7 @@ export default function LibraryApp() {
       </header>
 
       <div className="flex-1 overflow-y-auto p-4 md:p-8 flex flex-col">
-        <div className="max-w-3xl mx-auto w-full h-full flex flex-col">
+        <div className="max-w-5xl mx-auto w-full h-full flex flex-col">
           
           {/* 作成画面 */}
           {view === 'create' && (
@@ -268,7 +286,7 @@ export default function LibraryApp() {
           {/* 本棚モード */}
           {view === 'shelf' && (
             <div className="pb-20">
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
                 {displayedBooks.map(book => (
                   <div key={book.id} className="group relative flex flex-col gap-2">
                     <div onClick={() => openBook(book)} className="aspect-[3/4] bg-white rounded-r-lg shadow-lg cursor-pointer hover:-translate-y-2 transition-transform flex flex-col justify-center items-center border-l-8 border-indigo-950 text-gray-800 relative overflow-hidden p-4 text-center border-2 border-amber-100">
@@ -315,7 +333,7 @@ export default function LibraryApp() {
             </div>
           )}
 
-          {/* 読書モード (画像なし・シンプル) */}
+          {/* 読書モード */}
           {view === 'read' && currentBook && (
             <div className="flex flex-col h-full bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden">
               <div className="bg-[#fdf6e3] p-4 border-b border-amber-100 flex justify-between items-center shrink-0 flex-wrap gap-2">
@@ -326,8 +344,10 @@ export default function LibraryApp() {
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto bg-[#fffbf0] p-6 md:p-12">
-                <div className="max-w-3xl mx-auto text-center"> {/* 中央揃えで読みやすく */}
+                <div className="max-w-3xl mx-auto text-center">
+                   {/* 見出し */}
                    <h2 className="text-2xl font-bold text-gray-900 mb-8 border-b-2 border-amber-200 inline-block pb-2 px-4">{currentBook.pages[currentPageIndex].headline}</h2>
+                   {/* 本文 */}
                    <p className="text-lg leading-loose text-gray-800 whitespace-pre-wrap font-medium text-left">{currentBook.pages[currentPageIndex].content}</p>
                    <div className="h-20"></div>
                 </div>
