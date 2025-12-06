@@ -90,7 +90,7 @@ export default function PictureBookApp() {
     return `https://image.pollinations.ai/prompt/${safePrompt}?width=1024&height=768&nologo=true&seed=${seed}`;
   };
 
-  // ★ 高速PDF保存機能（並列ダウンロード）
+  // ★ PDF保存機能（並列ダウンロードで高速化）
   const savePDF = async () => {
     if (!currentBook) return;
     setIsSavingPDF(true);
@@ -107,7 +107,7 @@ export default function PictureBookApp() {
         import('@pdf-lib/fontkit'),
         // フォント取得（失敗してもnullを返すだけで止まらないようにする）
         fetch(window.location.origin + '/fonts/gothic.ttf').then(res => res.arrayBuffer()).catch(() => null),
-        // 画像の一括取得
+        // ★全ページの画像を一括取得
         Promise.all(currentBook.pages.map(async (page, i) => {
            try {
              const url = getImageUrl(page.image_prompt, (currentBook.id * 100) + i);
@@ -130,6 +130,7 @@ export default function PictureBookApp() {
         customFont = await pdfDoc.embedFont(fontBytes);
       } else {
         customFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+        alert("日本語フォントが読み込めませんでした（標準フォントを使用します）");
       }
 
       // 3. ページ生成（データは既に手元にあるので一瞬で終わる）
@@ -247,7 +248,11 @@ export default function PictureBookApp() {
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-pink-100 text-center">
                 <h2 className="font-bold text-lg text-pink-600 mb-4">✨ どんな絵本を作る？</h2>
                 <div className="flex gap-2 max-w-lg mx-auto">
-                  <input type="text" value={topic} onChange={e => setTopic(e.target.value)} placeholder="例：魔法の森の冒険" className="flex-1 border-2 border-pink-200 p-3 rounded-xl focus:border-pink-400 outline-none transition" />
+                  <input 
+                    type="text" value={topic} onChange={e => setTopic(e.target.value)} 
+                    placeholder="例：魔法の森の冒険" 
+                    className="flex-1 border-2 border-pink-200 p-3 rounded-xl focus:border-pink-400 outline-none transition"
+                  />
                   <button onClick={generateBook} disabled={isGenerating} className="bg-pink-500 text-white px-6 rounded-xl font-bold shadow hover:bg-pink-600 disabled:bg-gray-300">
                     {isGenerating ? '作成中...' : '作る！'}
                   </button>
@@ -258,11 +263,16 @@ export default function PictureBookApp() {
                   <div key={book.id} className="group relative">
                     <div onClick={() => openBook(book)} className="aspect-[4/3] bg-white rounded-xl shadow-lg cursor-pointer hover:scale-105 transition-transform overflow-hidden border-4 border-white">
                       {book.pages[0]?.image_prompt ? (
-                        <img src={getImageUrl(book.pages[0].image_prompt, (book.id * 100))} alt="cover" className="w-full h-full object-cover" loading="lazy" />
+                        <img 
+                          src={getImageUrl(book.pages[0].image_prompt, (book.id * 100))} 
+                          alt="cover" className="w-full h-full object-cover" loading="lazy" 
+                        />
                       ) : (
                         <div className="w-full h-full bg-pink-100 flex items-center justify-center text-4xl">🎨</div>
                       )}
-                      <div className="absolute bottom-0 inset-x-0 bg-black/60 p-2 text-white"><h4 className="font-bold text-sm truncate">{book.title}</h4></div>
+                      <div className="absolute bottom-0 inset-x-0 bg-black/60 p-2 text-white">
+                        <h4 className="font-bold text-sm truncate">{book.title}</h4>
+                      </div>
                     </div>
                     <button onClick={() => deleteBook(book.id)} className="absolute -top-2 -right-2 bg-gray-500 text-white w-6 h-6 rounded-full text-xs shadow">×</button>
                   </div>
@@ -274,7 +284,12 @@ export default function PictureBookApp() {
           {view === 'read' && currentBook && (
             <div className="flex flex-col h-full bg-white rounded-2xl shadow-2xl overflow-hidden border-4 border-pink-200">
               <div className="flex-1 bg-gray-100 relative overflow-hidden">
-                <img key={pageIndex} src={getImageUrl(currentBook.pages[pageIndex].image_prompt, (currentBook.id * 100) + pageIndex)} alt="挿絵" className="w-full h-full object-contain bg-black" />
+                <img 
+                  key={pageIndex} 
+                  src={getImageUrl(currentBook.pages[pageIndex].image_prompt, (currentBook.id * 100) + pageIndex)} 
+                  alt="挿絵" 
+                  className="w-full h-full object-contain bg-black" 
+                />
                 <button onClick={() => changePage(Math.max(0, pageIndex - 1))} disabled={pageIndex === 0} className="absolute left-0 top-0 bottom-0 w-16 hover:bg-black/20 text-white text-3xl disabled:hidden">◀</button>
                 <button onClick={() => changePage(Math.min(currentBook.pages.length - 1, pageIndex + 1))} disabled={pageIndex === currentBook.pages.length - 1} className="absolute right-0 top-0 bottom-0 w-16 hover:bg-black/20 text-white text-3xl disabled:hidden">▶</button>
               </div>
