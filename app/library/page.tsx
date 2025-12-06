@@ -32,9 +32,11 @@ export default function LibraryApp() {
   const [bookType, setBookType] = useState('study');
   const [isGenerating, setIsGenerating] = useState(false);
   
+  // 音声関連
   const [isSpeaking, setIsSpeaking] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [useVoicevox, setUseVoicevox] = useState(true); // 美声モードスイッチ
+  const [useVoicevox, setUseVoicevox] = useState(true);
+  const isPlayingRef = useRef(false); // 再生中フラグ（refで即時反映）
 
   const [editingBookId, setEditingBookId] = useState<number | null>(null);
   const [editTitleText, setEditTitleText] = useState('');
@@ -108,115 +110,109 @@ export default function LibraryApp() {
     return text.replace(/[#*_\-`]/g, '').replace(/\n/g, ' ').trim();
   };
 
-  // ★標準音声での読み上げ（フォールバック用）
-  const speakStandard = (text: string) => {
+  // 標準音声での読み上げ
+  const speakStandard = (text: string, onEnd: () => void) => {
     if (typeof window === 'undefined') return;
     window.speechSynthesis.cancel();
     
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'ja-JP';
     utterance.rate = 1.0;
-    
-    // 読み終わったら次へ
-    utterance.onend = () => {
-      if (currentBook && currentPageIndex < currentBook.pages.length - 1) {
-        // ページ送り（自動再生フラグON）
-        changePage(currentPageIndex + 1, true);
-      } else {
-        setIsSpeaking(false);
-      }
-    };
-    
+    utterance.onend = onEnd;
     window.speechSynthesis.speak(utterance);
   };
 
-  // ★メインの読み上げ関数
-  const speakText = async (text: string) => {
-    const cleaned = cleanText(text);
+  // 音声再生のメインロジック
+  const speakCurrentPage = async () => {
+    if (!currentBook) return;
+    const page = currentBook.pages[currentPageIndex];
+    const text = cleanText(`${page.headline}。${page.content}`);
+    
+    setIsSpeaking(true);
+    isPlayingRef.current = true;
 
-    // 美声モードがONならAPIを試す
+    const handleNext = () => {
+      if (!isPlayingRef.current) return;
+      if (currentPageIndex < currentBook.pages.length - 1) {
+        // 次のページへ（少し待ってから）
+        setTimeout(() => {
+          if (isPlayingRef.current) {
+            setCurrentPageIndex(prev => prev + 1); // ページめくり
+            // useEffectでページ変更を検知して自動再生させるため、ここでは呼ばない
+          }
+        }, 1000);
+      } else {
+        stopSpeaking();
+      }
+    };
+
     if (useVoicevox) {
       try {
-        // API: https://tts.quest (無料・高速)
-        const queryUrl = `https://api.tts.quest/v3/voicevox/synthesis?text=${encodeURIComponent(cleaned)}&speaker=2`;
+        // speaker: 47 (ナースロボ_タイプＴ) -> 落ち着いた声で安定している
+        // または 2 (四国めたん)
+        const queryUrl = `https://api.tts.quest/v3/voicevox/synthesis?text=${encodeURIComponent(text)}&speaker=2`;
         
-        const res = await fetch(queryUrl);
-        const data = await res.json();
-
-        if (data.mp3StreamingUrl && audioRef.current) {
-           audioRef.current.src = data.mp3StreamingUrl;
-           await audioRef.current.play();
-           
-           // 再生終了時の処理
-           audioRef.current.onended = () => {
-             if (currentBook && currentPageIndex < currentBook.pages.length - 1) {
-               changePage(currentPageIndex + 1, true);
-             } else {
-               setIsSpeaking(false);
-             }
-           };
-        } else {
-           throw new Error("音声URL取得失敗");
+        if (audioRef.current) {
+          audioRef.current.src = queryUrl;
+          await audioRef.current.play();
+          audioRef.current.onended = handleNext;
+          audioRef.current.onerror = () => {
+             console.warn("VOICEVOX再生エラー -> 標準音声へ");
+             speakStandard(text, handleNext);
+          };
         }
       } catch (e) {
-        console.warn("美声モード失敗、標準音声に切り替えます", e);
-        // ★ここが重要: エラーが出たらアラートを出さずに設定をOFFにして、即座に標準音声で読み直す
-        setUseVoicevox(false); 
-        speakStandard(cleaned);
+        console.warn("APIエラー -> 標準音声へ");
+        speakStandard(text, handleNext);
       }
     } else {
-      // 最初からOFFなら標準音声
-      speakStandard(cleaned);
+      speakStandard(text, handleNext);
     }
   };
 
+  // ページが変わった時に自動再生（連動用）
+  useEffect(() => {
+    if (isSpeaking && currentBook) {
+       // ページが変わったので、そのページの読み上げを開始
+       speakCurrentPage();
+    }
+  }, [currentPageIndex]); // ページ番号が変わるたびに発火
+
   const stopSpeaking = () => {
+    isPlayingRef.current = false;
+    setIsSpeaking(false);
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
     }
     if (typeof window !== 'undefined') window.speechSynthesis.cancel();
-    setIsSpeaking(false);
   };
 
   const toggleSpeak = () => {
     if (isSpeaking) {
       stopSpeaking();
     } else {
-      if (currentBook) {
-        setIsSpeaking(true);
-        const page = currentBook.pages[currentPageIndex];
-        speakText(`${page.headline}。${page.content}`);
-      }
-    }
-  };
-
-  // ページ切り替え
-  const changePage = (newIndex: number, autoPlay = false) => {
-    // 一旦止める（重複防止）
-    stopSpeaking();
-    
-    // ステート更新を確実に行う
-    setCurrentPageIndex(newIndex);
-    
-    if (autoPlay && currentBook) {
       setIsSpeaking(true);
-      // ステート反映待ちのために少し遅延させる
-      setTimeout(() => {
-        // 注意: ここでは newIndex を使って直接データを取る（ステート更新前でも正しいデータを読むため）
-        const page = currentBook.pages[newIndex];
-        if (page) {
-           speakText(`${page.headline}。${page.content}`);
-        }
-      }, 500);
+      isPlayingRef.current = true;
+      speakCurrentPage();
     }
   };
 
-  // 画像URL生成
+  // 手動ページ送り
+  const changePage = (newIndex: number) => {
+    // 手動操作時は読み上げを止める
+    stopSpeaking();
+    setCurrentPageIndex(newIndex);
+  };
+
+  // ★画像URL生成 (アニメ調に強制)
   const getImageUrl = (prompt?: string) => {
     if (!prompt) return null;
-    const safePrompt = encodeURIComponent(prompt.substring(0, 200));
-    return `https://image.pollinations.ai/prompt/${safePrompt}?width=800&height=600&nologo=true&seed=${Math.floor(Math.random() * 99999)}`;
+    // 日本語が含まれているとエラーになるので除去して英語部分だけ抽出（簡易）
+    // またはそのままエンコードして、末尾にスタイル指定を追加
+    const safePrompt = encodeURIComponent(prompt.substring(0, 150));
+    // anime style, cute, vivid colors を強制追加
+    return `https://image.pollinations.ai/prompt/${safePrompt}%20anime%20style,%20cute,%20vivid%20colors,%20high%20quality?width=800&height=600&nologo=true&seed=${Math.floor(Math.random() * 99999)}`;
   };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-amber-50">Loading...</div>;
