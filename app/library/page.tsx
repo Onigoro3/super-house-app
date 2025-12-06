@@ -41,16 +41,15 @@ export default function LibraryApp() {
   const [bookLength, setBookLength] = useState('short');
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateStatus, setGenerateStatus] = useState('');
-  
-  // ★修正: ダウンロード中フラグを追加
-  const [isDownloading, setIsDownloading] = useState(false);
 
+  // 読み上げ設定
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   const [useVoicevox, setUseVoicevox] = useState(true);
   const [speechRate, setSpeechRate] = useState(1.0); 
   const [speechVolume, setSpeechVolume] = useState(1.0); 
   const [showSettings, setShowSettings] = useState(false);
+
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const isPlayingRef = useRef(false);
 
   const [editingBookId, setEditingBookId] = useState<number | null>(null);
@@ -65,7 +64,7 @@ export default function LibraryApp() {
     return () => stopSpeaking();
   }, []);
 
-  // ページ変更時の自動再生
+  // ページ変更時に自動再生
   useEffect(() => {
     if (isPlayingRef.current && currentBook) {
       const timer = setTimeout(() => playCurrentContent(), 500);
@@ -128,7 +127,35 @@ export default function LibraryApp() {
   };
 
   const uploadToStock = async (e: React.ChangeEvent<HTMLInputElement>) => { const file = e.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = async (ev) => { const text = ev.target?.result as string; if (!text) return; const title = file.name.replace(/\.[^/.]+$/, ""); await supabase.from('raw_texts').insert([{ title, content: text }]); alert('保存しました'); fetchRawTexts(); e.target.value = ''; }; reader.readAsText(file); };
-  const convertStockToBook = async (raw: RawText) => { if (!confirm(`「${raw.title}」を本にしますか？`)) return; const pages: BookPage[] = []; const lines = raw.content.split('\n'); let currentPageContent = ""; let currentHeadline = raw.title; let pageNum = 1; for (let i = 0; i < lines.length; i++) { const line = lines[i].trim(); if (line.startsWith('#')) { if (currentPageContent.trim()) { pages.push({ page_number: pageNum++, headline: currentHeadline, content: currentPageContent.trim() }); currentPageContent = ""; } currentHeadline = line.replace(/^#+\s*/, ''); } else { currentPageContent += line + "\n"; if (currentPageContent.length > 500) { pages.push({ page_number: pageNum++, headline: currentHeadline, content: currentPageContent.trim() }); currentPageContent = ""; currentHeadline = `(続き) ${currentHeadline}`; } } } if (currentPageContent.trim()) { pages.push({ page_number: pageNum++, headline: currentHeadline, content: currentPageContent.trim() }); } if (pages.length === 0) { const chars = 300; let p=1; for(let i=0;i<raw.content.length;i+=chars){ pages.push({page_number:p,headline:p===1?raw.title:`ページ ${p}`,content:raw.content.substring(i,i+chars).trim()}); p++; } } await supabase.from('books').insert([{ title: raw.title, topic: 'インポート', pages, current_page: 0 }]); if (!error) { alert('本棚に追加しました！'); fetchBooks(); setView('shelf'); } else { alert('作成失敗'); } };
+  
+  // ★修正箇所: error を正しく宣言
+  const convertStockToBook = async (raw: RawText) => {
+    if (!confirm(`「${raw.title}」を本にしますか？`)) return;
+    const pages: BookPage[] = [];
+    const lines = raw.content.split('\n');
+    let currentPageContent = "";
+    let currentHeadline = raw.title;
+    let pageNum = 1;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (line.startsWith('#')) {
+        if (currentPageContent.trim()) { pages.push({ page_number: pageNum++, headline: currentHeadline, content: currentPageContent.trim() }); currentPageContent = ""; }
+        currentHeadline = line.replace(/^#+\s*/, '');
+      } else {
+        currentPageContent += line + "\n";
+        if (currentPageContent.length > 500) { pages.push({ page_number: pageNum++, headline: currentHeadline, content: currentPageContent.trim() }); currentPageContent = ""; currentHeadline = `(続き) ${currentHeadline}`; }
+      }
+    }
+    if (currentPageContent.trim()) { pages.push({ page_number: pageNum++, headline: currentHeadline, content: currentPageContent.trim() }); }
+    if (pages.length === 0) { const chars = 300; let p=1; for(let i=0;i<raw.content.length;i+=chars){ pages.push({page_number:p,headline:p===1?raw.title:`ページ ${p}`,content:raw.content.substring(i,i+chars).trim()}); p++; } }
+    
+    // ★ここを修正しました
+    const { error } = await supabase.from('books').insert([{ title: raw.title, topic: 'インポート', pages, current_page: 0 }]);
+    
+    if (!error) { alert('本棚に追加しました！'); fetchBooks(); setView('shelf'); } 
+    else { alert('作成失敗'); }
+  };
+
   const deleteStock = async (id: number) => { if(!confirm("削除しますか？")) return; await supabase.from('raw_texts').delete().eq('id', id); fetchRawTexts(); };
 
   const openBook = (book: Book) => { setCurrentBook(book); const startPage = book.current_page || 0; setCurrentPageIndex(Math.min(startPage, book.pages.length - 1)); setView('read'); stopSpeaking(); };
@@ -144,7 +171,7 @@ export default function LibraryApp() {
     if (currentPageIndex < currentBook.pages.length - 1) { setCurrentPageIndex(prev => prev + 1); } 
     else { stopSpeaking(); }
   };
-  const speakStandard = (text: string, onEnd: () => void) => { if (typeof window === 'undefined') return; window.speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = 'ja-JP'; u.rate = speechRate; u.volume = speechVolume; u.onend = handleAudioEnd; window.speechSynthesis.speak(u); };
+  const speakStandard = (text: string, onEnd: () => void) => { if (typeof window === 'undefined') return; window.speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = 'ja-JP'; u.rate = speechRate; u.volume = speechVolume; u.onend = onEnd; window.speechSynthesis.speak(u); };
   
   const playCurrentContent = async () => {
     if (!currentBook) return;
@@ -159,7 +186,7 @@ export default function LibraryApp() {
   const downloadText = () => { if (!currentBook) return; const content = `${currentBook.title}\n\n` + currentBook.pages.map(p => `[${p.headline}]\n${p.content}`).join('\n\n'); const blob = new Blob([content], { type: 'text/plain' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `${currentBook.title}.txt`; link.click(); };
   const downloadPDF = async () => {
     if (!currentBook) return;
-    setIsDownloading(true); // ★セット
+    setIsDownloading(true);
     try {
       const { PDFDocument, rgb, StandardFonts } = await import('pdf-lib');
       const fontkit = (await import('@pdf-lib/fontkit')).default;
@@ -174,7 +201,7 @@ export default function LibraryApp() {
         y = drawWrappedText(bookPage.headline, 50, y, 20, 500, rgb(0, 0, 0)); y -= 20; drawWrappedText(bookPage.content, 50, y, 12, 500, rgb(0, 0, 0));
       }
       const pdfBytes = await pdfDoc.save(); const blob = new Blob([pdfBytes as any], { type: 'application/pdf' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `${currentBook.title}.pdf`; link.click();
-    } catch (e) { alert('PDF作成失敗'); } finally { setIsDownloading(false); } // ★リセット
+    } catch (e) { alert('PDF作成失敗'); } finally { setIsDownloading(false); }
   };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-amber-50">Loading...</div>;
@@ -206,7 +233,7 @@ export default function LibraryApp() {
       {/* ヘッダー */}
       <header className="bg-amber-900 text-white p-4 shadow-md flex justify-between items-center z-10 shrink-0">
         <div className="flex items-center gap-4">
-          <Link href="/" className="bg-amber-800 hover:bg-amber-700 px-3 py-1 rounded-lg font-bold text-xs transition">🔙 ホーム</Link>
+          <Link href="/" className="bg-amber-800 hover:bg-amber-700 px-3 py-1 rounded-lg font-bold text-sm transition">🔙 ホーム</Link>
           <h1 className="text-xl font-bold">{view === 'stock' ? '📂 ストック' : (filterMode === 'all' ? '📚 AIライブラリ' : '❤ お気に入り')}</h1>
         </div>
         {view === 'read' ? (
@@ -297,7 +324,6 @@ export default function LibraryApp() {
                 </div>
               </div>
 
-              {/* 設定パネル */}
               {showSettings && <div className="bg-[#fff9e6] p-4 border-b border-amber-200 animate-fadeIn"><div className="flex flex-wrap gap-6 items-center justify-center"><label className="flex items-center gap-2 cursor-pointer bg-white px-3 py-1 rounded border border-amber-300"><input type="checkbox" checked={useVoicevox} onChange={() => setUseVoicevox(!useVoicevox)} /><span className="text-sm font-bold text-amber-800">美声モード</span></label><div className="flex items-center gap-2"><span className="text-xs font-bold text-amber-700">速度: {speechRate.toFixed(1)}</span><input type="range" min="0.5" max="2.0" step="0.1" value={speechRate} onChange={(e) => setSpeechRate(parseFloat(e.target.value))} className="w-24 accent-amber-600" /></div><div className="flex items-center gap-2"><span className="text-xs font-bold text-amber-700">音量: {Math.round(speechVolume * 100)}%</span><input type="range" min="0" max="1.0" step="0.1" value={speechVolume} onChange={(e) => setSpeechVolume(parseFloat(e.target.value))} className="w-24 accent-amber-600" /></div></div></div>}
 
               <div className="flex-1 overflow-y-auto bg-[#fffbf0] p-6 md:p-12">
