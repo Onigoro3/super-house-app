@@ -68,7 +68,7 @@ export async function POST(req: Request) {
     `;
 
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.0-flash",
+      model: "gemini-2.5-flash",
       tools: [{ googleSearch: {} } as any]
     });
     
