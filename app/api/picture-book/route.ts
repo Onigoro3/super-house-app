@@ -8,42 +8,47 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 export async function POST(req: Request) {
   try {
     const { topic } = await req.json();
-    console.log(`絵本作成: ${topic}`);
+    console.log(`絵本作成開始: ${topic}`);
 
     const prompt = `
-      You are a professional children's book author and art director.
-      Please create a heartwarming picture book in **JAPANESE** based on the theme: "${topic}".
+      You are a professional children's book author.
+      Create a heartwarming picture book in **JAPANESE** based on the theme: "${topic}".
 
       【Rules】
-      1. Write the story in **JAPANESE** (Hiragana mainly, easy for kids).
-      2. Create 8 to 10 pages.
-      3. For each page, provide an **'image_prompt' in ENGLISH** for an AI image generator.
-         - The image style MUST be: **"anime style, cute, vivid colors, ghibli style, high quality"**.
-         - Describe the scene visually and simply.
+      1. Write in **JAPANESE** (Hiragana mainly).
+      2. Create exactly 8 pages.
+      3. For each page, provide an **'image_prompt' in ENGLISH** for AI image generation.
+         - Style: "anime style, ghibli style, cute, vivid colors, high quality"
+         - Describe the scene visually.
 
       【Output JSON Format】
-      STRICTLY output in the following JSON format:
+      Return ONLY the JSON. No markdown formatting.
 
       {
-        "title": "Title in Japanese",
+        "title": "Title",
         "pages": [
-          { 
-            "page_number": 1, 
-            "content": "Story text in Japanese...", 
-            "image_prompt": "A cute cat playing with a ball, anime style, vivid colors, high quality" 
-          }
+          { "page_number": 1, "content": "Text...", "image_prompt": "English description..." },
+          { "page_number": 2, "content": "Text...", "image_prompt": "English description..." }
         ]
       }
     `;
 
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    // ★変更: 安定版の 1.5-flash を使用
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-1.5-flash",
+      generationConfig: { responseMimeType: "application/json" } // ★JSONモードを強制
+    });
+    
     const result = await model.generateContent(prompt);
     const text = result.response.text();
-    const jsonStr = text.match(/\{[\s\S]*\}/)?.[0] || "{}";
     
-    return NextResponse.json(JSON.parse(jsonStr));
+    // 安全にJSONをパース
+    const data = JSON.parse(text);
+
+    return NextResponse.json(data);
 
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("Book Gen Error:", error);
+    return NextResponse.json({ error: "絵本の作成に失敗しました。もう一度お試しください。" }, { status: 500 });
   }
 }
