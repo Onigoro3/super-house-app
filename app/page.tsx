@@ -42,6 +42,8 @@ export default function Launcher() {
     { name: 'チャットAI', icon: '🤖', color: 'bg-purple-500', link: '/chat', desc: '執事とお喋り' },
     { name: '天気', icon: '☀', color: 'bg-cyan-400', link: '/weather', desc: '天気予報' },
     { name: 'メモ帳', icon: '📝', color: 'bg-yellow-400', link: '/memo', desc: 'AIマインドマップ' },
+    // ★追加: AIライブラリ
+    { name: 'AIライブラリ', icon: '📚', color: 'bg-amber-600', link: '/library', desc: 'AIが書いた本' },
     
     // ダミーアプリ
     { name: 'ToDo', icon: '✅', color: 'bg-green-500', link: '#', desc: '準備中' },
