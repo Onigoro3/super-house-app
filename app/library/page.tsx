@@ -34,8 +34,7 @@ export default function LibraryApp() {
   
   const [isSpeaking, setIsSpeaking] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  // ★音声切り替え（デフォルトON）
-  const [useVoicevox, setUseVoicevox] = useState(true);
+  const [useVoicevox, setUseVoicevox] = useState(true); // 美声モードスイッチ
 
   const [editingBookId, setEditingBookId] = useState<number | null>(null);
   const [editTitleText, setEditTitleText] = useState('');
@@ -109,55 +108,65 @@ export default function LibraryApp() {
     return text.replace(/[#*_\-`]/g, '').replace(/\n/g, ' ').trim();
   };
 
-  // 音声再生
+  // ★標準音声での読み上げ（フォールバック用）
+  const speakStandard = (text: string) => {
+    if (typeof window === 'undefined') return;
+    window.speechSynthesis.cancel();
+    
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'ja-JP';
+    utterance.rate = 1.0;
+    
+    // 読み終わったら次へ
+    utterance.onend = () => {
+      if (currentBook && currentPageIndex < currentBook.pages.length - 1) {
+        // ページ送り（自動再生フラグON）
+        changePage(currentPageIndex + 1, true);
+      } else {
+        setIsSpeaking(false);
+      }
+    };
+    
+    window.speechSynthesis.speak(utterance);
+  };
+
+  // ★メインの読み上げ関数
   const speakText = async (text: string) => {
     const cleaned = cleanText(text);
 
+    // 美声モードがONならAPIを試す
     if (useVoicevox) {
       try {
-        // ★修正: より安定したAPIサーバーを使用 (speaker: 2 = 四国めたん)
-        // 記号除去してエンコード
+        // API: https://tts.quest (無料・高速)
         const queryUrl = `https://api.tts.quest/v3/voicevox/synthesis?text=${encodeURIComponent(cleaned)}&speaker=2`;
         
-        // 1. 音声URLを取得（非同期）
         const res = await fetch(queryUrl);
         const data = await res.json();
-        
+
         if (data.mp3StreamingUrl && audioRef.current) {
            audioRef.current.src = data.mp3StreamingUrl;
            await audioRef.current.play();
            
+           // 再生終了時の処理
            audioRef.current.onended = () => {
              if (currentBook && currentPageIndex < currentBook.pages.length - 1) {
-               setTimeout(() => changePage(currentPageIndex + 1, true), 1000);
+               changePage(currentPageIndex + 1, true);
              } else {
                setIsSpeaking(false);
              }
            };
         } else {
-           throw new Error("音声生成失敗");
+           throw new Error("音声URL取得失敗");
         }
       } catch (e) {
-        console.error("VOICEVOX Error:", e);
-        // 失敗したら標準音声にフォールバック
-        alert("美声モードで再生できませんでした。標準音声を使います。");
-        setUseVoicevox(false);
-        speakText(cleaned); // 再トライ
+        console.warn("美声モード失敗、標準音声に切り替えます", e);
+        // ★ここが重要: エラーが出たらアラートを出さずに設定をOFFにして、即座に標準音声で読み直す
+        setUseVoicevox(false); 
+        speakStandard(cleaned);
       }
     } else {
-      // ブラウザ標準
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(cleaned);
-      utterance.lang = 'ja-JP';
-      utterance.rate = 1.0;
-      utterance.onend = () => {
-        if (currentBook && currentPageIndex < currentBook.pages.length - 1) {
-          setTimeout(() => changePage(currentPageIndex + 1, true), 1000);
-        } else {
-          setIsSpeaking(false);
-        }
-      };
-      window.speechSynthesis.speak(utterance);
+      // 最初からOFFなら標準音声
+      speakStandard(cleaned);
     }
   };
 
@@ -182,24 +191,31 @@ export default function LibraryApp() {
     }
   };
 
+  // ページ切り替え
   const changePage = (newIndex: number, autoPlay = false) => {
+    // 一旦止める（重複防止）
     stopSpeaking();
+    
+    // ステート更新を確実に行う
     setCurrentPageIndex(newIndex);
     
     if (autoPlay && currentBook) {
       setIsSpeaking(true);
+      // ステート反映待ちのために少し遅延させる
       setTimeout(() => {
+        // 注意: ここでは newIndex を使って直接データを取る（ステート更新前でも正しいデータを読むため）
         const page = currentBook.pages[newIndex];
-        speakText(`${page.headline}。${page.content}`);
+        if (page) {
+           speakText(`${page.headline}。${page.content}`);
+        }
       }, 500);
     }
   };
 
-  // ★修正: 画像URL生成 (Pollinations API 最新版)
-  // ランダムシードをつけてキャッシュを回避し、確実に生成させる
+  // 画像URL生成
   const getImageUrl = (prompt?: string) => {
     if (!prompt) return null;
-    const safePrompt = encodeURIComponent(prompt.substring(0, 200)); // 長すぎるとエラーになるのでカット
+    const safePrompt = encodeURIComponent(prompt.substring(0, 200));
     return `https://image.pollinations.ai/prompt/${safePrompt}?width=800&height=600&nologo=true&seed=${Math.floor(Math.random() * 99999)}`;
   };
 
