@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import Auth from '../components/Auth';
 
+// 型定義
 type Spot = { time: string; name: string; desc: string; cost: string; distance: string; url: string; };
 type DayPlan = { day: number; spots: Spot[]; };
 type TravelPlan = { title: string; concept: string; schedule: DayPlan[]; };
@@ -15,6 +16,7 @@ export default function TravelApp() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'new' | 'history'>('new');
   
+  // 入力フォーム
   const [destination, setDestination] = useState('');
   const [duration, setDuration] = useState('日帰り');
   const [budget, setBudget] = useState('30000');
@@ -22,6 +24,7 @@ export default function TravelApp() {
   const [theme, setTheme] = useState('');
   const [transport, setTransport] = useState('車');
   
+  // 結果・履歴
   const [plan, setPlan] = useState<TravelPlan | null>(null);
   const [historyList, setHistoryList] = useState<SavedPlan[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -35,11 +38,13 @@ export default function TravelApp() {
     });
   }, []);
 
+  // 履歴読み込み
   const fetchHistory = async () => {
     const { data } = await supabase.from('travel_plans').select('*').order('created_at', { ascending: false });
     if (data) setHistoryList(data);
   };
 
+  // プラン生成
   const generatePlan = async () => {
     if (!destination) return alert('行き先を入力してください');
     setIsGenerating(true);
@@ -55,14 +60,36 @@ export default function TravelApp() {
     } catch (e) { alert('プラン作成に失敗しました'); } finally { setIsGenerating(false); }
   };
 
+  // プラン保存 (DB)
   const savePlanToHistory = async () => {
     if (!plan) return;
-    const { error } = await supabase.from('travel_plans').insert([{ title: plan.title, destination: destination, plan_data: plan }]);
-    if (error) alert('保存失敗'); else { alert('保存しました！'); fetchHistory(); }
+    const { error } = await supabase.from('travel_plans').insert([{
+      title: plan.title,
+      destination: destination,
+      plan_data: plan,
+    }]);
+    if (error) alert('保存に失敗しました');
+    else {
+      alert('履歴に保存しました！');
+      fetchHistory();
+    }
   };
-  const deleteHistory = async (id: number) => { if (!confirm('削除しますか？')) return; await supabase.from('travel_plans').delete().eq('id', id); fetchHistory(); };
-  const loadHistory = (saved: SavedPlan) => { setPlan(saved.plan_data); setDestination(saved.destination); setActiveTab('new'); };
 
+  // 履歴削除
+  const deleteHistory = async (id: number) => {
+    if (!confirm('削除しますか？')) return;
+    await supabase.from('travel_plans').delete().eq('id', id);
+    fetchHistory();
+  };
+
+  // 履歴を開く
+  const loadHistory = (saved: SavedPlan) => {
+    setPlan(saved.plan_data);
+    setDestination(saved.destination);
+    setActiveTab('new'); // 作成画面に戻って表示
+  };
+
+  // PDF保存
   const savePDF = async () => {
     if (!plan) return;
     setIsSaving(true);
@@ -96,7 +123,10 @@ export default function TravelApp() {
           y -= 15;
           const meta = `費用: ${spot.cost}  /  距離: ${spot.distance}`;
           page.drawText(meta, { x: 300, y: y + 15, size: 10, font: customFont, color: rgb(0.5, 0.5, 0.5) });
-          if (spot.url) { page.drawText(`URL: ${spot.url}`, { x: 60, y, size: 9, font: customFont, color: rgb(0, 0, 1) }); y -= 12; }
+          if (spot.url && spot.url !== 'なし' && spot.url !== '') { 
+             page.drawText(`URL: ${spot.url}`, { x: 60, y, size: 9, font: customFont, color: rgb(0, 0, 1) }); 
+             y -= 12; 
+          }
           const desc = spot.desc;
           const maxLen = 40;
           for (let i = 0; i < desc.length; i += maxLen) {
@@ -107,15 +137,42 @@ export default function TravelApp() {
         }
         y -= 20;
       }
+
       const pdfBytes = await pdfDoc.save();
       const base64String = Buffer.from(pdfBytes).toString('base64');
       await supabase.from('documents').insert([{ title: `${plan.title}.pdf`, folder_name: '旅行計画', file_data: base64String }]);
-      alert('PDF保存完了！');
+      alert('「書類管理」に旅のしおり(PDF)を保存しました！');
     } catch (e) { alert('保存エラー'); } finally { setIsSaving(false); }
   };
 
-  if (loading) return <div>Loading...</div>;
+  if (loading) return <div className="min-h-screen flex items-center justify-center bg-gray-100">Loading...</div>;
   if (!session) return <Auth onLogin={() => {}} />;
+
+  // ★URL抽出ヘルパー関数
+  const extractUrls = (text: string) => {
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    const urls = text.match(urlRegex);
+    return urls || [];
+  };
+
+  // ★テキスト内のURLをリンク化して表示するコンポーネント
+  const FormattedText = ({ text }: { text: string }) => {
+    // URLで分割して表示
+    const parts = text.split(/(https?:\/\/[^\s]+)/g);
+    return (
+      <span>
+        {parts.map((part, i) => 
+          part.match(/^https?:\/\//) ? (
+            <a key={i} href={part} target="_blank" rel="noreferrer" className="text-blue-600 underline break-all">
+              Link
+            </a>
+          ) : (
+            <span key={i}>{part}</span>
+          )
+        )}
+      </span>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-teal-50 flex flex-col h-screen text-gray-800">
@@ -151,11 +208,7 @@ export default function TravelApp() {
                      <div className="flex-1"><label className="block text-xs font-bold text-gray-500 mb-1">人数</label><select value={people} onChange={e => setPeople(e.target.value)} className="w-full border p-3 rounded-lg bg-white">{[1,2,3,4,5,6].map(p => <option key={p} value={p}>{p}人</option>)}</select></div>
                      <div className="flex-1"><label className="block text-xs font-bold text-gray-500 mb-1">1人予算</label><input type="number" value={budget} onChange={e => setBudget(e.target.value)} className="w-full border p-3 rounded-lg" /></div>
                   </div>
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 mb-1">テーマ・要望</label>
-                    <input type="text" value={theme} onChange={e => setTheme(e.target.value)} placeholder="例：サウナに行きたい、海鮮" className="w-full border p-3 rounded-lg" />
-                    <p className="text-xs text-gray-400 mt-1">※「サウナ」と入れると詳しく検索します♨️</p>
-                  </div>
+                  <div><label className="block text-xs font-bold text-gray-500 mb-1">テーマ・要望</label><input type="text" value={theme} onChange={e => setTheme(e.target.value)} placeholder="例：サウナ、温泉" className="w-full border p-3 rounded-lg" /></div>
                 </div>
                 <button onClick={generatePlan} disabled={isGenerating} className={`w-full py-4 rounded-xl font-bold text-white text-lg shadow transition ${isGenerating ? 'bg-gray-400' : 'bg-teal-500 hover:bg-teal-600'}`}>{isGenerating ? 'プラン作成中...' : '✨ 最高のプランを作成！'}</button>
               </div>
@@ -181,10 +234,22 @@ export default function TravelApp() {
                               <div className="w-16 font-mono text-gray-400 font-bold pt-1 text-sm">{spot.time}</div>
                               <div className="flex-1 bg-gray-50 p-4 rounded-xl border border-gray-100 group-hover:border-teal-200 transition">
                                 <div className="flex justify-between items-start mb-1">
-                                  <h4 className="font-bold text-teal-800 flex items-center gap-2">{spot.name} {spot.url && <a href={spot.url} target="_blank" rel="noreferrer" className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded hover:bg-blue-200">🔗Link</a>}</h4>
-                                  <div className="text-right flex flex-col items-end"><span className="text-xs bg-white border px-2 py-1 rounded text-gray-500 mb-1">{spot.cost}</span>{spot.distance && <span className="text-xs text-teal-600 font-bold">🚗 {spot.distance}</span>}</div>
+                                  <h4 className="font-bold text-teal-800 flex items-center gap-2">
+                                    {spot.name} 
+                                    {/* ★修正: 有効なURLがある場合のみLinkボタンを表示 */}
+                                    {spot.url && spot.url !== 'なし' && spot.url.startsWith('http') && (
+                                      <a href={spot.url} target="_blank" rel="noreferrer" className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded hover:bg-blue-200">🔗 Link</a>
+                                    )}
+                                  </h4>
+                                  <div className="text-right flex flex-col items-end">
+                                    <span className="text-xs bg-white border px-2 py-1 rounded text-gray-500 mb-1">{spot.cost}</span>
+                                    {spot.distance && <span className="text-xs text-teal-600 font-bold">🚗 {spot.distance}</span>}
+                                  </div>
                                 </div>
-                                <p className="text-sm text-gray-600 leading-relaxed whitespace-pre-wrap">{spot.desc}</p>
+                                {/* ★修正: 本文内のURLもリンク化 */}
+                                <p className="text-sm text-gray-600 leading-relaxed whitespace-pre-wrap">
+                                  <FormattedText text={spot.desc} />
+                                </p>
                               </div>
                             </div>
                           ))}
