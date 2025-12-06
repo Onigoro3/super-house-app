@@ -1,3 +1,4 @@
+// app/picture-book/page.tsx
 'use client';
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
@@ -89,52 +90,77 @@ export default function PictureBookApp() {
     return `https://image.pollinations.ai/prompt/${safePrompt}?width=1024&height=768&nologo=true&seed=${seed}`;
   };
 
-  // PDF保存機能
+  // ★ 高速PDF保存機能（並列ダウンロード）
   const savePDF = async () => {
     if (!currentBook) return;
     setIsSavingPDF(true);
+    
     try {
-      const { PDFDocument, rgb, StandardFonts } = await import('pdf-lib');
-      const fontkit = (await import('@pdf-lib/fontkit')).default;
+      // 1. 必要なリソースを「全て同時に」取得開始する（並列処理）
+      const [
+        { PDFDocument, rgb, StandardFonts },
+        { default: fontkit },
+        fontBytes,
+        imagesData // 全ページの画像データ配列
+      ] = await Promise.all([
+        import('pdf-lib'),
+        import('@pdf-lib/fontkit'),
+        // フォント取得（失敗してもnullを返すだけで止まらないようにする）
+        fetch(window.location.origin + '/fonts/gothic.ttf').then(res => res.arrayBuffer()).catch(() => null),
+        // 画像の一括取得
+        Promise.all(currentBook.pages.map(async (page, i) => {
+           try {
+             const url = getImageUrl(page.image_prompt, (currentBook.id * 100) + i);
+             const res = await fetch(url!);
+             if (!res.ok) throw new Error('Image fetch failed');
+             return await res.arrayBuffer();
+           } catch (e) {
+             console.warn(`Page ${i+1} image failed`);
+             return null; // 失敗時はnull
+           }
+        }))
+      ]);
+
+      // 2. PDFドキュメント作成
       const pdfDoc = await PDFDocument.create();
       pdfDoc.registerFontkit(fontkit);
 
       let customFont;
-      try {
-        const fontBytes = await fetch(window.location.origin + '/fonts/gothic.ttf').then(res => res.arrayBuffer());
+      if (fontBytes) {
         customFont = await pdfDoc.embedFont(fontBytes);
-      } catch (e) {
+      } else {
         customFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
-        alert("日本語フォントの読み込みに失敗しました。文字化けする可能性があります。");
       }
 
+      // 3. ページ生成（データは既に手元にあるので一瞬で終わる）
       for (let i = 0; i < currentBook.pages.length; i++) {
         const pageData = currentBook.pages[i];
-        const page = pdfDoc.addPage([595, 842]);
+        const imgBuffer = imagesData[i];
+        
+        const page = pdfDoc.addPage([595, 842]); // A4
         const { width, height } = page.getSize();
 
         // 画像の埋め込み
-        try {
-          const imgUrl = getImageUrl(pageData.image_prompt, (currentBook.id * 100) + i);
-          const imgBytes = await fetch(imgUrl!).then(res => res.arrayBuffer());
-          // ★修正: embedJwt -> embedJpg
-          const image = await pdfDoc.embedJpg(imgBytes); 
-          
-          page.drawImage(image, {
-            x: (width - 500) / 2,
-            y: height - 400,
-            width: 500,
-            height: 350,
-          });
-        } catch (e) {
-          console.error("画像読み込み失敗", e);
-          page.drawText("[画像読み込みエラー]", { x: 50, y: height - 200, size: 12, font: customFont, color: rgb(1,0,0) });
+        if (imgBuffer) {
+          try {
+            const image = await pdfDoc.embedJpg(imgBuffer);
+            page.drawImage(image, {
+              x: (width - 500) / 2,
+              y: height - 400,
+              width: 500,
+              height: 350,
+            });
+          } catch (e) {
+            console.error("画像埋め込みエラー", e);
+          }
         }
 
+        // テキスト描画
         const text = pageData.content;
         const fontSize = 18;
         let y = height - 450;
         let currentLine = "";
+        
         for (let j = 0; j < text.length; j++) {
            const char = text[j];
            if (currentLine.length > 25) {
@@ -145,10 +171,10 @@ export default function PictureBookApp() {
            currentLine += char;
         }
         page.drawText(currentLine, { x: 50, y, size: fontSize, font: customFont, color: rgb(0,0,0) });
-
         page.drawText(`- ${i + 1} -`, { x: width / 2 - 10, y: 30, size: 12, font: customFont, color: rgb(0.5, 0.5, 0.5) });
       }
 
+      // 4. 保存＆ダウンロード
       const pdfBytes = await pdfDoc.save();
       const blob = new Blob([pdfBytes as any], { type: 'application/pdf' });
       const link = document.createElement('a');
@@ -206,7 +232,7 @@ export default function PictureBookApp() {
         {view === 'read' && (
            <div className="flex gap-2">
              <button onClick={savePDF} disabled={isSavingPDF} className="text-xs bg-white text-pink-600 px-3 py-1 rounded font-bold shadow hover:bg-pink-100">
-               {isSavingPDF ? '保存中...' : '📄 PDF保存'}
+               {isSavingPDF ? '作成中(高速)...' : '📄 PDF保存'}
              </button>
              <button onClick={() => setView('shelf')} className="text-xs bg-pink-600 px-3 py-1 rounded">本棚へ</button>
            </div>
@@ -221,11 +247,7 @@ export default function PictureBookApp() {
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-pink-100 text-center">
                 <h2 className="font-bold text-lg text-pink-600 mb-4">✨ どんな絵本を作る？</h2>
                 <div className="flex gap-2 max-w-lg mx-auto">
-                  <input 
-                    type="text" value={topic} onChange={e => setTopic(e.target.value)} 
-                    placeholder="例：魔法の森の冒険" 
-                    className="flex-1 border-2 border-pink-200 p-3 rounded-xl focus:border-pink-400 outline-none transition"
-                  />
+                  <input type="text" value={topic} onChange={e => setTopic(e.target.value)} placeholder="例：魔法の森の冒険" className="flex-1 border-2 border-pink-200 p-3 rounded-xl focus:border-pink-400 outline-none transition" />
                   <button onClick={generateBook} disabled={isGenerating} className="bg-pink-500 text-white px-6 rounded-xl font-bold shadow hover:bg-pink-600 disabled:bg-gray-300">
                     {isGenerating ? '作成中...' : '作る！'}
                   </button>
@@ -236,16 +258,11 @@ export default function PictureBookApp() {
                   <div key={book.id} className="group relative">
                     <div onClick={() => openBook(book)} className="aspect-[4/3] bg-white rounded-xl shadow-lg cursor-pointer hover:scale-105 transition-transform overflow-hidden border-4 border-white">
                       {book.pages[0]?.image_prompt ? (
-                        <img 
-                          src={`https://image.pollinations.ai/prompt/${encodeURIComponent(book.pages[0].image_prompt)}?width=400&height=300&nologo=true&seed=${book.id}`} 
-                          alt="cover" className="w-full h-full object-cover" 
-                        />
+                        <img src={getImageUrl(book.pages[0].image_prompt, (book.id * 100))} alt="cover" className="w-full h-full object-cover" loading="lazy" />
                       ) : (
                         <div className="w-full h-full bg-pink-100 flex items-center justify-center text-4xl">🎨</div>
                       )}
-                      <div className="absolute bottom-0 inset-x-0 bg-black/60 p-2 text-white">
-                        <h4 className="font-bold text-sm truncate">{book.title}</h4>
-                      </div>
+                      <div className="absolute bottom-0 inset-x-0 bg-black/60 p-2 text-white"><h4 className="font-bold text-sm truncate">{book.title}</h4></div>
                     </div>
                     <button onClick={() => deleteBook(book.id)} className="absolute -top-2 -right-2 bg-gray-500 text-white w-6 h-6 rounded-full text-xs shadow">×</button>
                   </div>
@@ -257,12 +274,7 @@ export default function PictureBookApp() {
           {view === 'read' && currentBook && (
             <div className="flex flex-col h-full bg-white rounded-2xl shadow-2xl overflow-hidden border-4 border-pink-200">
               <div className="flex-1 bg-gray-100 relative overflow-hidden">
-                <img 
-                  key={pageIndex} 
-                  src={getImageUrl(currentBook.pages[pageIndex].image_prompt, (currentBook.id * 100) + pageIndex)} 
-                  alt="挿絵" 
-                  className="w-full h-full object-contain bg-black" 
-                />
+                <img key={pageIndex} src={getImageUrl(currentBook.pages[pageIndex].image_prompt, (currentBook.id * 100) + pageIndex)} alt="挿絵" className="w-full h-full object-contain bg-black" />
                 <button onClick={() => changePage(Math.max(0, pageIndex - 1))} disabled={pageIndex === 0} className="absolute left-0 top-0 bottom-0 w-16 hover:bg-black/20 text-white text-3xl disabled:hidden">◀</button>
                 <button onClick={() => changePage(Math.min(currentBook.pages.length - 1, pageIndex + 1))} disabled={pageIndex === currentBook.pages.length - 1} className="absolute right-0 top-0 bottom-0 w-16 hover:bg-black/20 text-white text-3xl disabled:hidden">▶</button>
               </div>
