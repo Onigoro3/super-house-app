@@ -18,6 +18,7 @@ type Book = {
   topic?: string;
   pages: BookPage[];
   is_favorite: boolean;
+  current_page: number; // ★追加：これでエラーが消えます
 };
 
 type RawText = { id: number; title: string; content: string; created_at: string; };
@@ -67,13 +68,15 @@ export default function LibraryApp() {
     if (data) setRawTexts(data);
   };
 
-  // ★重要: ここで表示する本をフィルタリング
+  // フィルタリング
   const displayedBooks = filterMode === 'all' ? books : books.filter(b => b.is_favorite);
 
+  // --- AI生成 ---
   const generateBook = async () => {
     if (!topic) return alert("テーマを入力してください");
     setIsGenerating(true);
     setGenerateStatus('AIが執筆中...');
+    
     try {
       if (bookLength === 'super_long') setGenerateStatus('前編を執筆中 (1/2)...');
       
@@ -114,13 +117,15 @@ export default function LibraryApp() {
     finally { setIsGenerating(false); setGenerateStatus(''); }
   };
 
+  // ストック機能
   const uploadToStock = async (e: React.ChangeEvent<HTMLInputElement>) => { const file = e.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = async (ev) => { const text = ev.target?.result as string; if (!text) return; const title = file.name.replace(/\.[^/.]+$/, ""); await supabase.from('raw_texts').insert([{ title, content: text }]); alert('保存しました'); fetchRawTexts(); e.target.value = ''; }; reader.readAsText(file); };
-  const convertStockToBook = async (raw: RawText) => { if (!confirm(`「${raw.title}」を本にしますか？`)) return; const chars=300; const pages=[]; let p=1; for(let i=0;i<raw.content.length;i+=chars){ pages.push({page_number:p,headline:p===1?raw.title:`ページ ${p}`,content:raw.content.substring(i,i+chars).trim()}); p++; } await supabase.from('books').insert([{ title:raw.title, topic:'インポート', pages }]); alert('本棚に追加しました'); fetchBooks(); setView('shelf'); };
+  const convertStockToBook = async (raw: RawText) => { if (!confirm(`「${raw.title}」を本にしますか？`)) return; const chars=300; const pages=[]; let p=1; for(let i=0;i<raw.content.length;i+=chars){ pages.push({page_number:p,headline:p===1?raw.title:`ページ ${p}`,content:raw.content.substring(i,i+chars).trim()}); p++; } await supabase.from('books').insert([{ title:raw.title, topic:'インポート', pages, current_page: 0 }]); alert('本棚に追加しました'); fetchBooks(); setView('shelf'); };
   const deleteStock = async (id: number) => { if(!confirm("削除しますか？")) return; await supabase.from('raw_texts').delete().eq('id', id); fetchRawTexts(); };
 
+  // --- 本の操作 ---
   const openBook = (book: Book) => {
     setCurrentBook(book);
-    const startPage = book.current_page || 0; // しおり
+    const startPage = book.current_page || 0;
     setCurrentPageIndex(Math.min(startPage, book.pages.length - 1));
     setView('read');
     stopSpeaking();
@@ -131,6 +136,7 @@ export default function LibraryApp() {
   const saveTitle = async (id: number) => { if (!editTitleText.trim()) return; await supabase.from('books').update({ title: editTitleText }).eq('id', id); setEditingBookId(null); fetchBooks(); };
   const toggleFavorite = async (id: number, current: boolean, e: React.MouseEvent) => { e.stopPropagation(); setBooks(prev => prev.map(b => b.id === id ? { ...b, is_favorite: !current } : b)); await supabase.from('books').update({ is_favorite: !current }).eq('id', id); };
 
+  // 読み上げ
   const cleanText = (text: string) => text.replace(/[#*_\-`]/g, '').replace(/\n/g, ' ').trim();
   const speakStandard = (text: string, onEnd: () => void) => { if (typeof window === 'undefined') return; window.speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = 'ja-JP'; u.rate = 1.0; u.onend = onEnd; window.speechSynthesis.speak(u); };
   
@@ -144,12 +150,13 @@ export default function LibraryApp() {
   };
   const stopSpeaking = () => { isPlayingRef.current = false; setIsSpeaking(false); if (audioRef.current) { audioRef.current.pause(); audioRef.current.currentTime = 0; } if (typeof window !== 'undefined') window.speechSynthesis.cancel(); };
   const toggleSpeak = () => { if (isSpeaking) stopSpeaking(); else { setIsSpeaking(true); isPlayingRef.current = true; speakCurrentPage(); } };
+  
   const changePage = (newIndex: number, autoPlay = false) => {
     stopSpeaking(); setCurrentPageIndex(newIndex);
     if (currentBook) saveBookmark(currentBook.id, newIndex);
     if (autoPlay && currentBook) { setIsSpeaking(true); setTimeout(() => { const page = currentBook.pages[newIndex]; if (page) speakCurrentPage(); }, 500); }
   };
-  // 画像URL生成 (アニメ調に強制)
+  // 画像URL生成
   const getImageUrl = (prompt?: string) => {
     if (!prompt) return null;
     const safePrompt = encodeURIComponent(prompt.substring(0, 150));
@@ -203,7 +210,7 @@ export default function LibraryApp() {
             <div className="bg-white p-6 rounded-lg shadow-sm border border-amber-200">
               <div className="flex justify-between items-center mb-4"><h2 className="font-bold text-lg text-amber-900">✨ 新しい本を執筆</h2><button onClick={() => setView('shelf')} className="text-sm text-gray-400">キャンセル</button></div>
               <div className="flex flex-col gap-4">
-                <input type="text" value={topic} onChange={e => setTopic(e.target.value)} placeholder="テーマ" className="border p-3 rounded-lg w-full bg-amber-50" />
+                <input type="text" value={topic} onChange={e => setTopic(e.target.value)} placeholder="テーマ (例: 宇宙の歴史)" className="border p-3 rounded-lg w-full bg-amber-50" />
                 <div className="flex gap-2">
                   <select value={bookType} onChange={e => setBookType(e.target.value)} className="border p-3 rounded-lg bg-white"><option value="study">📖 参考書</option><option value="story">🧚 絵本</option></select>
                   <select value={bookLength} onChange={e => setBookLength(e.target.value)} className="border p-3 rounded-lg bg-white"><option value="short">短編</option><option value="long">中編</option><option value="super_long">超長編</option></select>
