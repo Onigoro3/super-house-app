@@ -7,41 +7,65 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
 export async function POST(req: Request) {
   try {
-    const { topic, type, length } = await req.json();
+    const { topic, type, length, previousContent } = await req.json();
+    
+    let prompt = "";
 
-    const pageCountInstruction = length === 'long' 
-      ? "Create about 15 to 20 pages." 
-      : "Create 5 to 8 pages.";
+    // ★ 続きを書くモード（後編）
+    if (previousContent) {
+      prompt = `
+        You are a professional book writer.
+        Please write the **CONTINUATION (Part 2)** of the following story/book.
+        
+        【Theme】 ${topic}
+        【Type】 ${type === 'story' ? 'Story' : 'Study Book'}
+        
+        【Previous Context (End of Part 1)】
+        "${previousContent}..."
 
-    const prompt = `
-      You are a professional book writer.
-      Please write a book in **JAPANESE** based on the following theme.
-      
-      【Theme】
-      ${topic}
+        【Rules】
+        1. Write in **JAPANESE**.
+        2. Create about 20 pages to conclude or continue the story properly.
+        3. Start from page 21.
+        4. No images required.
 
-      【Type】
-      ${type === 'story' ? 'Children\'s Picture Book (Story)' : 'Introductory Book (Study)'}
+        【Output JSON Format】
+        {
+          "pages": [
+            { "page_number": 21, "headline": "Headline", "content": "Content..." },
+            ...
+          ]
+        }
+      `;
+    } 
+    // ★ 新規作成モード（前編または完結）
+    else {
+      const pageCountInstruction = length === 'super_long' 
+        ? "Create exactly 20 pages (Part 1 of a long story). End with a cliffhanger or 'To be continued'." 
+        : (length === 'long' ? "Create about 15-20 pages." : "Create 5-8 pages.");
 
-      【Rules】
-      1. Write the content in **JAPANESE**.
-      2. ${pageCountInstruction}
-      3. No images or image prompts required. Focus on text content.
+      prompt = `
+        You are a professional book writer.
+        Please write a book in **JAPANESE**.
+        
+        【Theme】 ${topic}
+        【Type】 ${type === 'story' ? 'Children\'s Picture Book' : 'Introductory Book'}
 
-      【Output JSON Format】
-      STRICTLY output in the following JSON format:
+        【Rules】
+        1. Write in **JAPANESE**.
+        2. ${pageCountInstruction}
+        3. No images required.
 
-      {
-        "title": "Book Title (in Japanese)",
-        "pages": [
-          { 
-            "page_number": 1, 
-            "headline": "Page Headline (in Japanese)", 
-            "content": "Page Content (in Japanese)"
-          }
-        ]
-      }
-    `;
+        【Output JSON Format】
+        {
+          "title": "Book Title",
+          "pages": [
+            { "page_number": 1, "headline": "Headline", "content": "Content..." },
+            ...
+          ]
+        }
+      `;
+    }
 
     const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
     const result = await model.generateContent(prompt);
