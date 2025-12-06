@@ -41,13 +41,11 @@ export default function LibraryApp() {
   const [bookLength, setBookLength] = useState('short');
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateStatus, setGenerateStatus] = useState('');
+  const [isDownloading, setIsDownloading] = useState(false); // ダウンロード中フラグ
 
-  // 読み上げ状態管理
   const [isSpeaking, setIsSpeaking] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [useVoicevox, setUseVoicevox] = useState(true);
-  
-  // 再生中かどうかのフラグ（useEffect内での参照用）
   const isPlayingRef = useRef(false);
 
   const [editingBookId, setEditingBookId] = useState<number | null>(null);
@@ -61,19 +59,6 @@ export default function LibraryApp() {
     });
     return () => stopSpeaking();
   }, []);
-
-  // ★重要：ページが変わった時に、再生中ならそのページを読み上げる
-  useEffect(() => {
-    if (isSpeaking && currentBook) {
-      // 少し待ってから再生（切り替え直後の安定のため）
-      const timer = setTimeout(() => {
-        if (isPlayingRef.current) {
-          playCurrentContent();
-        }
-      }, 500);
-      return () => clearTimeout(timer);
-    }
-  }, [currentPageIndex]); // ページ番号が変わるたびに実行
 
   const fetchBooks = async () => {
     const { data } = await supabase.from('books').select('*').order('created_at', { ascending: false });
@@ -132,7 +117,32 @@ export default function LibraryApp() {
   };
 
   const uploadToStock = async (e: React.ChangeEvent<HTMLInputElement>) => { const file = e.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = async (ev) => { const text = ev.target?.result as string; if (!text) return; const title = file.name.replace(/\.[^/.]+$/, ""); await supabase.from('raw_texts').insert([{ title, content: text }]); alert('保存しました'); fetchRawTexts(); e.target.value = ''; }; reader.readAsText(file); };
-  const convertStockToBook = async (raw: RawText) => { if (!confirm(`「${raw.title}」を本にしますか？`)) return; const chars=300; const pages=[]; let p=1; for(let i=0;i<raw.content.length;i+=chars){ pages.push({page_number:p,headline:p===1?raw.title:`ページ ${p}`,content:raw.content.substring(i,i+chars).trim()}); p++; } await supabase.from('books').insert([{ title:raw.title, topic:'インポート', pages, current_page: 0 }]); alert('本棚に追加しました'); fetchBooks(); setView('shelf'); };
+  
+  const convertStockToBook = async (raw: RawText) => {
+    if (!confirm(`「${raw.title}」を本にしますか？`)) return;
+    const pages: BookPage[] = [];
+    const lines = raw.content.split('\n');
+    let currentPageContent = "";
+    let currentHeadline = raw.title; 
+    let pageNum = 1;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (line.startsWith('#')) {
+        if (currentPageContent.trim()) { pages.push({ page_number: pageNum++, headline: currentHeadline, content: currentPageContent.trim() }); currentPageContent = ""; }
+        currentHeadline = line.replace(/^#+\s*/, '');
+      } else {
+        currentPageContent += line + "\n";
+        if (currentPageContent.length > 500) { pages.push({ page_number: pageNum++, headline: currentHeadline, content: currentPageContent.trim() }); currentPageContent = ""; currentHeadline = `(続き) ${currentHeadline}`; }
+      }
+    }
+    if (currentPageContent.trim()) { pages.push({ page_number: pageNum++, headline: currentHeadline, content: currentPageContent.trim() }); }
+    if (pages.length === 0) { const chars = 300; let p=1; for(let i=0;i<raw.content.length;i+=chars){ pages.push({page_number:p,headline:p===1?raw.title:`ページ ${p}`,content:raw.content.substring(i,i+chars).trim()}); p++; } }
+    
+    // topicを 'インポート' にして保存
+    const { error } = await supabase.from('books').insert([{ title: raw.title, topic: 'インポート', pages, current_page: 0 }]);
+    if (!error) { alert('本棚に追加しました！'); fetchBooks(); setView('shelf'); } else { alert('作成失敗'); }
+  };
+
   const deleteStock = async (id: number) => { if(!confirm("削除しますか？")) return; await supabase.from('raw_texts').delete().eq('id', id); fetchRawTexts(); };
 
   const openBook = (book: Book) => {
@@ -148,82 +158,98 @@ export default function LibraryApp() {
   const saveTitle = async (id: number) => { if (!editTitleText.trim()) return; await supabase.from('books').update({ title: editTitleText }).eq('id', id); setEditingBookId(null); fetchBooks(); };
   const toggleFavorite = async (id: number, current: boolean, e: React.MouseEvent) => { e.stopPropagation(); setBooks(prev => prev.map(b => b.id === id ? { ...b, is_favorite: !current } : b)); await supabase.from('books').update({ is_favorite: !current }).eq('id', id); };
 
-  // --- 読み上げロジック ---
+  // --- 読み上げ ---
   const cleanText = (text: string) => text.replace(/[#*_\-`]/g, '').replace(/\n/g, ' ').trim();
-
-  // 再生終了時の処理（次のページへ）
-  const handleAudioEnd = () => {
-    if (!isPlayingRef.current || !currentBook) return;
-    
-    if (currentPageIndex < currentBook.pages.length - 1) {
-      // ページ番号を更新（→ useEffectが検知して次の再生を開始する）
-      setCurrentPageIndex(prev => prev + 1);
-    } else {
-      // 最後まで読んだら停止
-      stopSpeaking();
-    }
-  };
-
-  const speakStandard = (text: string) => {
-    if (typeof window === 'undefined') return;
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = 'ja-JP';
-    u.rate = 1.0;
-    u.onend = handleAudioEnd; // 終わったら次へ
-    window.speechSynthesis.speak(u);
-  };
+  const speakStandard = (text: string, onEnd: () => void) => { if (typeof window === 'undefined') return; window.speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = 'ja-JP'; u.rate = 1.0; u.onend = onEnd; window.speechSynthesis.speak(u); };
   
-  // 現在のページの内容を再生する関数
-  const playCurrentContent = async () => {
+  const speakCurrentPage = async () => {
     if (!currentBook) return;
     const page = currentBook.pages[currentPageIndex];
-    // 見出しを含めて読む
-    const text = cleanText(`${page.headline}。\n${page.content}`);
-    
-    if (useVoicevox) {
-      try {
-        const url = `https://api.tts.quest/v3/voicevox/synthesis?text=${encodeURIComponent(text)}&speaker=2`;
-        if (audioRef.current) {
-          audioRef.current.src = url;
-          await audioRef.current.play();
-          audioRef.current.onended = handleAudioEnd; // 終わったら次へ
-          audioRef.current.onerror = () => { 
-            console.warn("VOICEVOX Error, fallback to standard");
-            speakStandard(text); 
-          };
-        }
-      } catch (e) {
-        speakStandard(text);
-      }
-    } else {
-      speakStandard(text);
-    }
-  };
 
-  const stopSpeaking = () => {
-    isPlayingRef.current = false;
-    setIsSpeaking(false);
-    if (audioRef.current) { audioRef.current.pause(); audioRef.current.currentTime = 0; }
-    if (typeof window !== 'undefined') window.speechSynthesis.cancel();
-  };
-
-  const toggleSpeak = () => {
-    if (isSpeaking) {
-      stopSpeaking();
+    // ★修正: AI生成本なら本文のみ、インポート本なら見出し＋本文を読む
+    let textToRead = "";
+    if (currentBook.topic === 'インポート') {
+      textToRead = cleanText(`${page.headline}。\n${page.content}`);
     } else {
-      setIsSpeaking(true);
-      isPlayingRef.current = true;
-      playCurrentContent(); // 再生開始
+      textToRead = cleanText(page.content); // AI本は見出しをスキップ
     }
+
+    setIsSpeaking(true); isPlayingRef.current = true;
+    const handleNext = () => { if (!isPlayingRef.current) return; if (currentPageIndex < currentBook.pages.length - 1) { setTimeout(() => { if (isPlayingRef.current) changePage(currentPageIndex + 1, true); }, 1000); } else { stopSpeaking(); } };
+    if (useVoicevox) { try { const url = `https://api.tts.quest/v3/voicevox/synthesis?text=${encodeURIComponent(textToRead)}&speaker=2`; if (audioRef.current) { audioRef.current.src = url; await audioRef.current.play(); audioRef.current.onended = handleNext; audioRef.current.onerror = () => { console.warn("VOICEVOX Error"); speakStandard(textToRead, handleNext); }; } } catch (e) { speakStandard(textToRead, handleNext); } } else { speakStandard(textToRead, handleNext); }
   };
+  const stopSpeaking = () => { isPlayingRef.current = false; setIsSpeaking(false); if (audioRef.current) { audioRef.current.pause(); audioRef.current.currentTime = 0; } if (typeof window !== 'undefined') window.speechSynthesis.cancel(); };
+  const toggleSpeak = () => { if (isSpeaking) stopSpeaking(); else { setIsSpeaking(true); isPlayingRef.current = true; speakCurrentPage(); } };
   
-  // 手動でページをめくった時
-  const changePage = (newIndex: number) => {
-    // 手動操作時は読み上げを止める
-    stopSpeaking();
-    setCurrentPageIndex(newIndex);
+  const changePage = (newIndex: number, autoPlay = false) => {
+    stopSpeaking(); setCurrentPageIndex(newIndex);
     if (currentBook) saveBookmark(currentBook.id, newIndex);
+    if (autoPlay && currentBook) { setIsSpeaking(true); setTimeout(() => { const page = currentBook.pages[newIndex]; if (page) speakCurrentPage(); }, 500); }
+  };
+
+  // ★テキストダウンロード
+  const downloadText = () => {
+    if (!currentBook) return;
+    const content = `${currentBook.title}\n\n` + currentBook.pages.map(p => `[${p.headline}]\n${p.content}`).join('\n\n');
+    const blob = new Blob([content], { type: 'text/plain' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `${currentBook.title}.txt`;
+    link.click();
+  };
+
+  // ★PDFダウンロード
+  const downloadPDF = async () => {
+    if (!currentBook) return;
+    setIsDownloading(true);
+    try {
+      const { PDFDocument, rgb, StandardFonts } = await import('pdf-lib');
+      const fontkit = (await import('@pdf-lib/fontkit')).default;
+      const pdfDoc = await PDFDocument.create();
+      pdfDoc.registerFontkit(fontkit);
+
+      let customFont;
+      try {
+        const fontBytes = await fetch(window.location.origin + '/fonts/gothic.ttf').then(res => res.arrayBuffer());
+        customFont = await pdfDoc.embedFont(fontBytes);
+      } catch (e) { customFont = await pdfDoc.embedFont(StandardFonts.Helvetica); }
+
+      for (let i = 0; i < currentBook.pages.length; i++) {
+        const bookPage = currentBook.pages[i];
+        const page = pdfDoc.addPage([595, 842]);
+        const { height } = page.getSize();
+        let y = height - 50;
+
+        // 折り返し描画関数
+        const drawWrappedText = (text: string, x: number, y: number, size: number, maxWidth: number, color: any) => {
+          let currentLine = '';
+          for (let j = 0; j < text.length; j++) {
+            const width = customFont.widthOfTextAtSize(currentLine + text[j], size);
+            if (width > maxWidth) {
+              page.drawText(currentLine, { x, y, size, font: customFont, color });
+              currentLine = text[j]; y -= size * 1.5;
+            } else { currentLine += text[j]; }
+          }
+          page.drawText(currentLine, { x, y, size, font: customFont, color });
+          return y - (size * 1.5);
+        };
+
+        page.drawText(currentBook.title, { x: 50, y, size: 10, font: customFont, color: rgb(0.5, 0.5, 0.5) });
+        page.drawText(`P.${i + 1}`, { x: 500, y, size: 10, font: customFont, color: rgb(0.5, 0.5, 0.5) });
+        y -= 40;
+
+        y = drawWrappedText(bookPage.headline, 50, y, 20, 500, rgb(0, 0, 0));
+        y -= 20;
+        drawWrappedText(bookPage.content, 50, y, 12, 500, rgb(0, 0, 0));
+      }
+
+      const pdfBytes = await pdfDoc.save();
+      const blob = new Blob([pdfBytes as any], { type: 'application/pdf' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `${currentBook.title}.pdf`;
+      link.click();
+    } catch (e) { alert('PDF作成失敗'); } finally { setIsDownloading(false); }
   };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-amber-50">Loading...</div>;
@@ -339,15 +365,18 @@ export default function LibraryApp() {
               <div className="bg-[#fdf6e3] p-4 border-b border-amber-100 flex justify-between items-center shrink-0 flex-wrap gap-2">
                 <div><h3 className="font-bold text-amber-900 truncate max-w-[150px] md:max-w-md">{currentBook.title}</h3><span className="text-xs text-amber-700">Page {currentBook.pages[currentPageIndex].page_number} / {currentBook.pages.length}</span></div>
                 <div className="flex items-center gap-2">
+                  {/* ★DLボタン追加 */}
+                  <button onClick={downloadText} className="text-xs bg-gray-100 px-2 py-1 rounded hover:bg-gray-200" title="テキスト保存">📄 TXT</button>
+                  <button onClick={downloadPDF} disabled={isDownloading} className="text-xs bg-gray-100 px-2 py-1 rounded hover:bg-gray-200" title="PDF保存">📑 {isDownloading?'...':'PDF'}</button>
+                  <div className="w-1 h-6 bg-gray-300 mx-1"></div>
+                  
                   <label className="flex items-center gap-1 text-xs cursor-pointer bg-white px-2 py-1 rounded border border-amber-200"><input type="checkbox" checked={useVoicevox} onChange={() => setUseVoicevox(!useVoicevox)} />美声モード</label>
                   <button onClick={toggleSpeak} className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold shadow transition ${isSpeaking ? 'bg-orange-500 text-white animate-pulse' : 'bg-white text-orange-600 border border-orange-200'}`}>{isSpeaking ? '🔇 停止' : '🗣️ 連続読上'}</button>
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto bg-[#fffbf0] p-6 md:p-12">
                 <div className="max-w-3xl mx-auto text-center">
-                   {/* 見出し */}
                    <h2 className="text-2xl font-bold text-gray-900 mb-8 border-b-2 border-amber-200 inline-block pb-2 px-4">{currentBook.pages[currentPageIndex].headline}</h2>
-                   {/* 本文 */}
                    <p className="text-lg leading-loose text-gray-800 whitespace-pre-wrap font-medium text-left">{currentBook.pages[currentPageIndex].content}</p>
                    <div className="h-20"></div>
                 </div>
