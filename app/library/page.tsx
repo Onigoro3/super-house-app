@@ -9,7 +9,6 @@ type BookPage = {
   page_number: number;
   headline: string;
   content: string;
-  image_prompt?: string;
 };
 
 type Book = {
@@ -18,7 +17,7 @@ type Book = {
   topic?: string;
   pages: BookPage[];
   is_favorite: boolean;
-  current_page: number; // ★追加：これでエラーが消えます
+  current_page: number;
 };
 
 type RawText = { id: number; title: string; content: string; created_at: string; };
@@ -68,10 +67,9 @@ export default function LibraryApp() {
     if (data) setRawTexts(data);
   };
 
-  // フィルタリング
   const displayedBooks = filterMode === 'all' ? books : books.filter(b => b.is_favorite);
 
-  // --- AI生成 ---
+  // AI生成 (画像なし)
   const generateBook = async () => {
     if (!topic) return alert("テーマを入力してください");
     setIsGenerating(true);
@@ -119,10 +117,61 @@ export default function LibraryApp() {
 
   // ストック機能
   const uploadToStock = async (e: React.ChangeEvent<HTMLInputElement>) => { const file = e.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = async (ev) => { const text = ev.target?.result as string; if (!text) return; const title = file.name.replace(/\.[^/.]+$/, ""); await supabase.from('raw_texts').insert([{ title, content: text }]); alert('保存しました'); fetchRawTexts(); e.target.value = ''; }; reader.readAsText(file); };
-  const convertStockToBook = async (raw: RawText) => { if (!confirm(`「${raw.title}」を本にしますか？`)) return; const chars=300; const pages=[]; let p=1; for(let i=0;i<raw.content.length;i+=chars){ pages.push({page_number:p,headline:p===1?raw.title:`ページ ${p}`,content:raw.content.substring(i,i+chars).trim()}); p++; } await supabase.from('books').insert([{ title:raw.title, topic:'インポート', pages, current_page: 0 }]); alert('本棚に追加しました'); fetchBooks(); setView('shelf'); };
+  
+  // ★テキスト変換ロジック（ハッシュタグ # で見出し分割）
+  const convertStockToBook = async (raw: RawText) => {
+    if (!confirm(`「${raw.title}」を本にしますか？`)) return;
+    
+    const pages: BookPage[] = [];
+    const lines = raw.content.split('\n');
+    let currentPageContent = "";
+    let currentHeadline = raw.title; // 最初の見出しはタイトル
+    let pageNum = 1;
+
+    // 行ごとの解析
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      
+      // "# " または "## " で始まる行を新しいページの見出しとする
+      if (line.startsWith('#')) {
+        // 前のページがあれば保存
+        if (currentPageContent.trim()) {
+          pages.push({ page_number: pageNum++, headline: currentHeadline, content: currentPageContent.trim() });
+          currentPageContent = "";
+        }
+        // 見出しを更新 (#を削除)
+        currentHeadline = line.replace(/^#+\s*/, '');
+      } else {
+        // 本文に追加
+        currentPageContent += line + "\n";
+        
+        // 文字数が多すぎたら分割（見出しなしで次ページへ）
+        if (currentPageContent.length > 500) {
+           pages.push({ page_number: pageNum++, headline: currentHeadline, content: currentPageContent.trim() });
+           currentPageContent = "";
+           currentHeadline = `(続き) ${currentHeadline}`; // 続きのページ用見出し
+        }
+      }
+    }
+    // 最後のページを保存
+    if (currentPageContent.trim()) {
+      pages.push({ page_number: pageNum++, headline: currentHeadline, content: currentPageContent.trim() });
+    }
+
+    // もし#がなくてページが1つもなければ、強制的に1ページ作成
+    if (pages.length === 0) {
+       // 単純分割
+       const chars = 300; let p=1;
+       for(let i=0;i<raw.content.length;i+=chars){ pages.push({page_number:p,headline:p===1?raw.title:`ページ ${p}`,content:raw.content.substring(i,i+chars).trim()}); p++; }
+    }
+
+    const { error } = await supabase.from('books').insert([{ title: raw.title, topic: 'インポート', pages, current_page: 0 }]);
+    if (!error) { alert('本棚に追加しました！'); fetchBooks(); setView('shelf'); } else { alert('作成失敗'); }
+  };
+
   const deleteStock = async (id: number) => { if(!confirm("削除しますか？")) return; await supabase.from('raw_texts').delete().eq('id', id); fetchRawTexts(); };
 
-  // --- 本の操作 ---
+  // 本の操作
   const openBook = (book: Book) => {
     setCurrentBook(book);
     const startPage = book.current_page || 0;
@@ -143,7 +192,9 @@ export default function LibraryApp() {
   const speakCurrentPage = async () => {
     if (!currentBook) return;
     const page = currentBook.pages[currentPageIndex];
-    const text = cleanText(page.content);
+    // ★見出しも含めて読む
+    const text = cleanText(`${page.headline}。\n${page.content}`);
+    
     setIsSpeaking(true); isPlayingRef.current = true;
     const handleNext = () => { if (!isPlayingRef.current) return; if (currentPageIndex < currentBook.pages.length - 1) { setTimeout(() => { if (isPlayingRef.current) changePage(currentPageIndex + 1, true); }, 1000); } else { stopSpeaking(); } };
     if (useVoicevox) { try { const url = `https://api.tts.quest/v3/voicevox/synthesis?text=${encodeURIComponent(text)}&speaker=2`; if (audioRef.current) { audioRef.current.src = url; await audioRef.current.play(); audioRef.current.onended = handleNext; audioRef.current.onerror = () => { console.warn("VOICEVOX Error"); speakStandard(text, handleNext); }; } } catch (e) { speakStandard(text, handleNext); } } else { speakStandard(text, handleNext); }
@@ -155,12 +206,6 @@ export default function LibraryApp() {
     stopSpeaking(); setCurrentPageIndex(newIndex);
     if (currentBook) saveBookmark(currentBook.id, newIndex);
     if (autoPlay && currentBook) { setIsSpeaking(true); setTimeout(() => { const page = currentBook.pages[newIndex]; if (page) speakCurrentPage(); }, 500); }
-  };
-  // 画像URL生成
-  const getImageUrl = (prompt?: string) => {
-    if (!prompt) return null;
-    const safePrompt = encodeURIComponent(prompt.substring(0, 150));
-    return `https://image.pollinations.ai/prompt/${safePrompt}%20anime%20style,%20cute,%20vivid%20colors,%20high%20quality?width=800&height=600&nologo=true&seed=${Math.floor(Math.random() * 99999)}`;
   };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-amber-50">Loading...</div>;
@@ -196,14 +241,14 @@ export default function LibraryApp() {
           <h1 className="text-xl font-bold">{view === 'stock' ? '📂 ストック' : (filterMode === 'all' ? '📚 AIライブラリ' : '❤ お気に入り')}</h1>
         </div>
         {view === 'read' ? (
-          <button onClick={() => { setView('shelf'); stopSpeaking(); }} className="text-sm bg-amber-800 px-3 py-1 rounded hover:bg-amber-700">本棚に戻る</button>
+          <button onClick={() => { setView('shelf'); stopSpeaking(); }} className="text-xs bg-amber-800 px-3 py-1 rounded hover:bg-amber-700">本棚へ</button>
         ) : (
           <button onClick={() => setShowMenu(true)} className="p-2 rounded hover:bg-amber-800 text-2xl">☰</button>
         )}
       </header>
 
       <div className="flex-1 overflow-y-auto p-4 md:p-8 flex flex-col">
-        <div className="max-w-5xl mx-auto w-full h-full flex flex-col">
+        <div className="max-w-3xl mx-auto w-full h-full flex flex-col">
           
           {/* 作成画面 */}
           {view === 'create' && (
@@ -223,20 +268,14 @@ export default function LibraryApp() {
           {/* 本棚モード */}
           {view === 'shelf' && (
             <div className="pb-20">
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
                 {displayedBooks.map(book => (
                   <div key={book.id} className="group relative flex flex-col gap-2">
-                    <div onClick={() => openBook(book)} className="aspect-[3/4] bg-white rounded-r-lg shadow-lg cursor-pointer hover:-translate-y-2 transition-transform flex flex-col border-l-8 border-indigo-950 text-white relative overflow-hidden">
-                       <button onClick={(e) => toggleFavorite(book.id, book.is_favorite, e)} className={`absolute top-2 right-2 text-2xl z-20 ${book.is_favorite ? 'text-pink-500' : 'text-white/30 hover:text-pink-300'}`}>{book.is_favorite ? '♥' : '♡'}</button>
-                       {book.pages[0]?.image_prompt ? (
-                        <img src={getImageUrl(book.pages[0].image_prompt) || ''} alt="cover" className="w-full h-full object-cover opacity-90" loading="lazy" />
-                      ) : (
-                        <div className="w-full h-full bg-gradient-to-br from-indigo-900 to-indigo-700 flex items-center justify-center text-4xl">📖</div>
-                      )}
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent flex flex-col justify-end p-3">
-                        <h4 className="font-bold text-white text-sm leading-snug line-clamp-2 shadow-sm">{book.title}</h4>
-                        <span className="text-[10px] text-gray-300 mt-1">P.{book.current_page || 0 + 1} / {book.pages.length}</span>
-                      </div>
+                    <div onClick={() => openBook(book)} className="aspect-[3/4] bg-white rounded-r-lg shadow-lg cursor-pointer hover:-translate-y-2 transition-transform flex flex-col justify-center items-center border-l-8 border-indigo-950 text-gray-800 relative overflow-hidden p-4 text-center border-2 border-amber-100">
+                       <button onClick={(e) => toggleFavorite(book.id, book.is_favorite, e)} className={`absolute top-2 right-2 text-2xl z-20 ${book.is_favorite ? 'text-pink-500' : 'text-gray-300 hover:text-pink-300'}`}>{book.is_favorite ? '♥' : '♡'}</button>
+                       <h4 className="font-bold text-lg leading-snug line-clamp-3 mb-2">{book.title}</h4>
+                       <div className="w-full border-t border-gray-200 my-2"></div>
+                       <span className="text-xs text-gray-500">P.{book.current_page || 0 + 1} / {book.pages.length}</span>
                     </div>
                     <div className="flex items-center justify-between px-1">
                       {editingBookId === book.id ? (
@@ -256,10 +295,11 @@ export default function LibraryApp() {
           {/* ストックモード */}
           {view === 'stock' && (
             <div className="space-y-6">
-              <div className="bg-white p-6 rounded-lg shadow-sm border-2 border-dashed border-green-300 text-center cursor-pointer relative">
+              <div className="bg-white p-6 rounded-lg shadow-sm border-2 border-dashed border-green-300 text-center cursor-pointer relative hover:bg-green-50">
                  <input type="file" accept=".txt" onChange={uploadToStock} className="absolute inset-0 opacity-0 cursor-pointer" />
                  <p className="text-2xl mb-2">📄</p>
                  <p className="font-bold text-green-700">テキストファイルをここに追加</p>
+                 <p className="text-xs text-gray-400 mt-1">「# タイトル」と書くと章になります</p>
               </div>
               <div className="grid gap-3">
                 {rawTexts.map(raw => (
@@ -275,7 +315,7 @@ export default function LibraryApp() {
             </div>
           )}
 
-          {/* 読書モード */}
+          {/* 読書モード (画像なし・シンプル) */}
           {view === 'read' && currentBook && (
             <div className="flex flex-col h-full bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden">
               <div className="bg-[#fdf6e3] p-4 border-b border-amber-100 flex justify-between items-center shrink-0 flex-wrap gap-2">
@@ -285,22 +325,11 @@ export default function LibraryApp() {
                   <button onClick={toggleSpeak} className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold shadow transition ${isSpeaking ? 'bg-orange-500 text-white animate-pulse' : 'bg-white text-orange-600 border border-orange-200'}`}>{isSpeaking ? '🔇 停止' : '🗣️ 連続読上'}</button>
                 </div>
               </div>
-              <div className="flex-1 overflow-y-auto bg-[#fffbf0] flex flex-col md:flex-row">
-                {/* 挿絵エリア (AI生成本の場合のみ表示) */}
-                {currentBook.topic !== 'インポート' && (
-                  <div className="w-full md:w-1/2 h-64 md:h-auto bg-gray-100 relative shrink-0 overflow-hidden">
-                    {currentBook.pages[currentPageIndex].image_prompt ? (
-                      <img src={getImageUrl(currentBook.pages[currentPageIndex].image_prompt) || ''} alt="挿絵" className="w-full h-full object-cover transition-opacity duration-500" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-gray-400">挿絵なし</div>
-                    )}
-                  </div>
-                )}
-                <div className="flex-1 p-6 md:p-10 flex flex-col">
-                  {/* 見出しは表示するが読まない */}
-                  <h2 className="text-2xl font-bold text-gray-900 mb-6 border-b pb-2 border-amber-200">{currentBook.pages[currentPageIndex].headline}</h2>
-                  <p className="text-lg leading-loose text-gray-800 whitespace-pre-wrap font-medium">{currentBook.pages[currentPageIndex].content}</p>
-                  <div className="h-20"></div>
+              <div className="flex-1 overflow-y-auto bg-[#fffbf0] p-6 md:p-12">
+                <div className="max-w-3xl mx-auto text-center"> {/* 中央揃えで読みやすく */}
+                   <h2 className="text-2xl font-bold text-gray-900 mb-8 border-b-2 border-amber-200 inline-block pb-2 px-4">{currentBook.pages[currentPageIndex].headline}</h2>
+                   <p className="text-lg leading-loose text-gray-800 whitespace-pre-wrap font-medium text-left">{currentBook.pages[currentPageIndex].content}</p>
+                   <div className="h-20"></div>
                 </div>
               </div>
               <div className="bg-[#fdf6e3] p-4 border-t border-amber-100 flex justify-between items-center shrink-0">
