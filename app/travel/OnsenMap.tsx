@@ -13,7 +13,6 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
-// 温泉アイコン（赤色）
 const onsenIcon = new L.Icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
@@ -30,12 +29,13 @@ type OnsenSpot = {
   name: string;
   hours: string;
   fee: string;
+  website?: string; // HP用
 };
 
 function MapUpdater({ center }: { center: [number, number] }) {
   const map = useMap();
   useEffect(() => {
-    map.setView(center, 13);
+    map.setView(center, 14);
   }, [center, map]);
   return null;
 }
@@ -44,45 +44,72 @@ export default function OnsenMap() {
   const [center, setCenter] = useState<[number, number] | null>(null);
   const [onsens, setOnsens] = useState<OnsenSpot[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState(''); // 検索用
 
-  useEffect(() => {
+  // 現在地取得
+  const handleCurrentLocation = () => {
+    setLoading(true);
     if (!navigator.geolocation) {
       alert('位置情報が使えません');
       setLoading(false);
       return;
     }
-
     navigator.geolocation.getCurrentPosition(
-      async (pos) => {
+      (pos) => {
         const { latitude, longitude } = pos.coords;
         setCenter([latitude, longitude]);
         fetchOnsens(latitude, longitude);
       },
       (err) => {
-        // 取得失敗時は東京駅周辺
-        setCenter([35.6812, 139.7671]);
+        setCenter([35.6812, 139.7671]); // デフォルト東京
         fetchOnsens(35.6812, 139.7671);
       }
     );
+  };
+
+  useEffect(() => {
+    handleCurrentLocation();
   }, []);
 
-  // Overpass APIを使って周辺の温泉を徹底的に検索
+  // 場所検索機能
+  const handleSearch = async () => {
+    if (!searchQuery) return;
+    setLoading(true);
+    try {
+      const q = searchQuery.replace(/　/g, ' ').trim();
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`);
+      const data = await res.json();
+
+      if (!data || data.length === 0) {
+        alert('場所が見つかりませんでした');
+        setLoading(false);
+        return;
+      }
+
+      const lat = parseFloat(data[0].lat);
+      const lon = parseFloat(data[0].lon);
+      
+      setCenter([lat, lon]);
+      fetchOnsens(lat, lon); // 新しい場所で温泉検索
+      setSearchQuery('');
+      
+    } catch (e) {
+      alert('検索エラー');
+      setLoading(false);
+    }
+  };
+
   const fetchOnsens = async (lat: number, lon: number) => {
     try {
-      // 半径5km以内。node(点), way(建物), relation(施設) 全てを対象にする
-      // public_bath, hot_spring, spa, water_park などを網羅
       const query = `
         [out:json];
         (
           node["natural"="hot_spring"](around:5000, ${lat}, ${lon});
           way["natural"="hot_spring"](around:5000, ${lat}, ${lon});
-          
           node["amenity"="public_bath"](around:5000, ${lat}, ${lon});
           way["amenity"="public_bath"](around:5000, ${lat}, ${lon});
-          
           node["leisure"="water_park"](around:5000, ${lat}, ${lon});
           way["leisure"="water_park"](around:5000, ${lat}, ${lon});
-
           node["tourism"="spa"](around:5000, ${lat}, ${lon});
           way["tourism"="spa"](around:5000, ${lat}, ${lon});
         );
@@ -92,20 +119,17 @@ export default function OnsenMap() {
       const data = await res.json();
 
       const spots = data.elements.map((el: any) => {
-        // way/relationの場合はcenter座標を使う
         const lat = el.lat || el.center?.lat;
         const lon = el.lon || el.center?.lon;
-        
-        // 情報の取得
         const tags = el.tags || {};
         const name = tags.name || tags['name:ja'] || tags['name:en'] || '入浴施設';
         const hours = tags.opening_hours || '不明';
         const fee = tags.fee || tags.charge || tags.cost || '不明';
+        const website = tags.website || tags['contact:website'] || tags.url; // URL取得
 
-        return { id: el.id, lat, lon, name, hours, fee };
-      }).filter((s: any) => s.lat && s.lon); // 座標が取れなかったデータは除外
+        return { id: el.id, lat, lon, name, hours, fee, website };
+      }).filter((s: any) => s.lat && s.lon);
 
-      // 重複削除（同じ場所で点と建物が重複している場合など）
       const uniqueSpots = spots.filter((v: OnsenSpot, i: number, a: OnsenSpot[]) => 
         a.findIndex(t => (t.name === v.name && Math.abs(t.lat - v.lat) < 0.001)) === i
       );
@@ -113,37 +137,41 @@ export default function OnsenMap() {
       setOnsens(uniqueSpots);
     } catch (e) {
       console.error(e);
-      alert('温泉データの取得に失敗しました');
+      alert('データ取得失敗');
     } finally {
       setLoading(false);
     }
   };
 
-  if (loading) return <div className="h-full flex items-center justify-center text-gray-500">現在地から温泉を探しています...</div>;
+  if (loading) return <div className="h-full flex items-center justify-center text-gray-500">検索中...</div>;
   if (!center) return <div className="h-full flex items-center justify-center text-red-500">位置情報が必要です</div>;
 
   return (
     <div className="h-full w-full relative rounded-2xl overflow-hidden border-2 border-white shadow-lg">
-      <MapContainer center={center} zoom={13} style={{ height: '100%', width: '100%' }}>
-        
-        {/* Googleマップのタイルを使用 */}
-        <TileLayer
-          attribution='© Google Maps'
-          url="https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}"
+      
+      {/* ★検索バー (地図の上に配置) */}
+      <div className="absolute top-2 left-2 right-2 z-[1000] flex gap-2">
+        <input 
+          type="text" 
+          value={searchQuery} 
+          onChange={(e) => setSearchQuery(e.target.value)} 
+          placeholder="場所検索 (例: 箱根、大阪駅)" 
+          className="flex-1 p-2 rounded-lg border border-gray-300 shadow-sm outline-none text-sm"
+          onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
         />
-        
+        <button onClick={handleSearch} className="bg-blue-600 text-white px-3 rounded-lg shadow-sm font-bold text-sm">🔍</button>
+        <button onClick={handleCurrentLocation} className="bg-white text-gray-600 px-3 rounded-lg shadow-sm font-bold text-xl border border-gray-300">📍</button>
+      </div>
+
+      <MapContainer center={center} zoom={14} style={{ height: '100%', width: '100%' }}>
+        <TileLayer attribution='© Google Maps' url="https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}" />
         <MapUpdater center={center} />
+        <Marker position={center}><Popup>中心地点</Popup></Marker>
 
-        {/* 現在地マーカー */}
-        <Marker position={center}>
-          <Popup>現在地</Popup>
-        </Marker>
-
-        {/* 温泉マーカー */}
         {onsens.map((onsen) => (
           <Marker key={onsen.id} position={[onsen.lat, onsen.lon]} icon={onsenIcon}>
             <Popup>
-              <div className="text-center p-2 min-w-[150px]">
+              <div className="text-center p-1 min-w-[180px]">
                 <h3 className="font-bold text-base mb-2 text-gray-800 border-b pb-1">{onsen.name}</h3>
                 
                 <div className="text-left text-xs text-gray-600 mb-3 space-y-1">
@@ -151,22 +179,43 @@ export default function OnsenMap() {
                   <p>💰 料金: {onsen.fee}</p>
                 </div>
 
-                <a 
-                  href={`https://www.google.com/maps/dir/?api=1&origin=${onsen.lat},${onsen.lon}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="bg-green-600 text-white font-bold text-sm px-4 py-2 rounded-lg shadow hover:bg-green-700 block text-center no-underline"
-                >
-                  🚗 ナビ開始
-                </a>
+                <div className="flex flex-col gap-2">
+                  {/* ★ナビボタン */}
+                  <a 
+                    href={`https://www.google.com/maps/dir/?api=1&origin=${onsen.lat},${onsen.lon}`}
+                    target="_blank" rel="noreferrer"
+                    className="bg-green-600 text-white font-bold text-sm px-4 py-2 rounded-lg shadow hover:bg-green-700 block text-center no-underline"
+                  >
+                    🚗 ナビ開始
+                  </a>
+                  
+                  {/* ★HPボタン (なければGoogle検索) */}
+                  {onsen.website ? (
+                    <a 
+                      href={onsen.website}
+                      target="_blank" rel="noreferrer"
+                      className="bg-blue-500 text-white font-bold text-sm px-4 py-2 rounded-lg shadow hover:bg-blue-600 block text-center no-underline"
+                    >
+                      🌐 公式HPを見る
+                    </a>
+                  ) : (
+                    <a 
+                      href={`https://www.google.com/search?q=${encodeURIComponent(onsen.name + " 温泉")}`}
+                      target="_blank" rel="noreferrer"
+                      className="bg-gray-100 text-gray-600 font-bold text-sm px-4 py-2 rounded-lg shadow hover:bg-gray-200 block text-center no-underline border border-gray-300"
+                    >
+                      🔍 Googleで検索
+                    </a>
+                  )}
+                </div>
               </div>
             </Popup>
           </Marker>
         ))}
       </MapContainer>
       
-      <div className="absolute top-3 right-3 z-[1000] bg-white/90 backdrop-blur p-2 rounded-lg shadow-lg border border-gray-100">
-        <p className="text-xs font-bold text-gray-600">半径5km以内の温泉</p>
+      <div className="absolute bottom-6 right-2 z-[1000] bg-white/90 backdrop-blur p-2 rounded-lg shadow-lg border border-gray-100">
+        <p className="text-xs font-bold text-gray-600">周辺の温泉</p>
         <p className="text-xl font-bold text-red-500 text-center">{onsens.length}<span className="text-xs text-gray-400 ml-1">件</span></p>
       </div>
     </div>
