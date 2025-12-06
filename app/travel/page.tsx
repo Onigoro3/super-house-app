@@ -22,7 +22,7 @@ export default function TravelApp() {
   const [session, setSession] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   
-  // ★画面切り替え ('new' | 'history' | 'map')
+  // 画面切り替え ('new' | 'history' | 'map')
   const [currentView, setCurrentView] = useState<'new' | 'history' | 'map'>('new');
   const [showMenu, setShowMenu] = useState(false); // メニュー開閉
 
@@ -33,7 +33,6 @@ export default function TravelApp() {
   const [people, setPeople] = useState('2');
   const [theme, setTheme] = useState('');
   const [transport, setTransport] = useState('車');
-  // 現在地（出発地）
   const [origin, setOrigin] = useState('現在地を取得中...');
 
   // 結果・履歴
@@ -90,7 +89,6 @@ export default function TravelApp() {
     setShowMenu(false);
   };
 
-  // PDF保存（省略なし）
   const savePDF = async () => {
     if (!plan) return; setIsSaving(true);
     try {
@@ -119,7 +117,8 @@ export default function TravelApp() {
       await supabase.from('documents').insert([{ title: `${plan.title}.pdf`, folder_name: '旅行計画', file_data: base64String }]); alert('PDF保存完了！');
     } catch (e) { alert('保存エラー'); } finally { setIsSaving(false); }
   };
-  const openGoogleMapsRoute = (spots: Spot[]) => { if (spots.length < 1) return; const dest = spots[spots.length - 1].name; const wp = spots.slice(0, -1).map(s => s.name).join('|'); window.open(`https://www.google.com/maps/dir/?api=1&origin=$&destination=${encodeURIComponent(dest)}&waypoints=${encodeURIComponent(wp)}&travelmode=${transport==='車'?'driving':'transit'}`, '_blank'); };
+
+  const openGoogleMapsRoute = (spots: Spot[]) => { if (spots.length < 1) return; const dest = spots[spots.length - 1].name; const wp = spots.slice(0, -1).map(s => s.name).join('|'); window.open(`http://googleusercontent.com/maps.google.com/8{encodeURIComponent(dest)}&waypoints=${encodeURIComponent(wp)}&travelmode=${transport==='車'?'driving':'transit'}`, '_blank'); };
   const FormattedText = ({ text }: { text: string }) => { const parts = text.split(/(https?:\/\/[^\s]+)/g); return <span>{parts.map((p,i)=>p.match(/^https?:\/\//)?<a key={i} href={p} target="_blank" rel="noreferrer" className="text-blue-600 underline mx-1 bg-blue-50 px-1 rounded text-xs">Link</a>:<span key={i}>{p}</span>)}</span>; };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-gray-100">Loading...</div>;
@@ -139,6 +138,7 @@ export default function TravelApp() {
               <button onClick={() => { setCurrentView('history'); setShowMenu(false); }} className={`w-full p-3 rounded-lg font-bold text-left ${currentView === 'history' ? 'bg-teal-100 text-teal-700' : 'text-gray-600 hover:bg-gray-50'}`}>📜 保存したプラン</button>
               <button onClick={() => { setCurrentView('map'); setShowMenu(false); }} className={`w-full p-3 rounded-lg font-bold text-left ${currentView === 'map' ? 'bg-teal-100 text-teal-700' : 'text-gray-600 hover:bg-gray-50'}`}>♨️ 周辺温泉マップ</button>
             </div>
+            <button onClick={() => setShowMenu(false)} className="mt-auto p-3 text-gray-400 text-center border-t">閉じる</button>
           </div>
         </div>
       )}
@@ -148,8 +148,11 @@ export default function TravelApp() {
           <Link href="/" className="bg-teal-700 hover:bg-teal-800 px-3 py-1 rounded-lg font-bold text-xs transition">🔙 ホーム</Link>
           <h1 className="text-lg font-bold">✈ お出かけ</h1>
         </div>
+        {/* ★三本線メニューボタン（ここが抜けていました！） */}
         <button onClick={() => setShowMenu(true)} className="p-2 rounded hover:bg-teal-700">
-          <div className="w-6 h-0.5 bg-white mb-1.5"></div><div className="w-6 h-0.5 bg-white mb-1.5"></div><div className="w-6 h-0.5 bg-white"></div>
+          <div className="w-6 h-0.5 bg-white mb-1.5"></div>
+          <div className="w-6 h-0.5 bg-white mb-1.5"></div>
+          <div className="w-6 h-0.5 bg-white"></div>
         </button>
       </header>
 
