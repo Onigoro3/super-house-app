@@ -34,7 +34,7 @@ export default function LibraryApp() {
   
   const [isSpeaking, setIsSpeaking] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  // ★追加: 音声エンジン切り替え (true: VOICEVOX, false: ブラウザ標準)
+  // ★音声切り替え（デフォルトON）
   const [useVoicevox, setUseVoicevox] = useState(true);
 
   const [editingBookId, setEditingBookId] = useState<number | null>(null);
@@ -46,9 +46,7 @@ export default function LibraryApp() {
       setLoading(false);
       if (session) fetchBooks();
     });
-    return () => {
-      if (typeof window !== 'undefined') window.speechSynthesis.cancel();
-    };
+    return () => stopSpeaking();
   }, []);
 
   const fetchBooks = async () => {
@@ -111,42 +109,47 @@ export default function LibraryApp() {
     return text.replace(/[#*_\-`]/g, '').replace(/\n/g, ' ').trim();
   };
 
-  // 音声再生（分岐）
+  // 音声再生
   const speakText = async (text: string) => {
     const cleaned = cleanText(text);
 
     if (useVoicevox) {
-      // VOICEVOX (API)
       try {
-        // speaker: 2 (四国めたん・ノーマル)
+        // ★修正: より安定したAPIサーバーを使用 (speaker: 2 = 四国めたん)
         // 記号除去してエンコード
-        const queryUrl = `https://api.su-shiki.com/v2/voicevox/audio/?text=${encodeURIComponent(cleaned)}&speaker=2&pitch=0&speed=100`;
-
-        if (audioRef.current) {
-          audioRef.current.src = queryUrl;
-          // 再生開始（ユーザー操作の直後でないとブロックされることがあるため注意）
-          await audioRef.current.play();
-          
-          audioRef.current.onended = () => {
-            if (currentBook && currentPageIndex < currentBook.pages.length - 1) {
-              setTimeout(() => changePage(currentPageIndex + 1, true), 1000);
-            } else {
-              setIsSpeaking(false);
-            }
-          };
+        const queryUrl = `https://api.tts.quest/v3/voicevox/synthesis?text=${encodeURIComponent(cleaned)}&speaker=2`;
+        
+        // 1. 音声URLを取得（非同期）
+        const res = await fetch(queryUrl);
+        const data = await res.json();
+        
+        if (data.mp3StreamingUrl && audioRef.current) {
+           audioRef.current.src = data.mp3StreamingUrl;
+           await audioRef.current.play();
+           
+           audioRef.current.onended = () => {
+             if (currentBook && currentPageIndex < currentBook.pages.length - 1) {
+               setTimeout(() => changePage(currentPageIndex + 1, true), 1000);
+             } else {
+               setIsSpeaking(false);
+             }
+           };
+        } else {
+           throw new Error("音声生成失敗");
         }
       } catch (e) {
         console.error("VOICEVOX Error:", e);
-        alert("VOICEVOXの再生に失敗しました。標準音声に切り替えてみてください。");
-        setIsSpeaking(false);
+        // 失敗したら標準音声にフォールバック
+        alert("美声モードで再生できませんでした。標準音声を使います。");
+        setUseVoicevox(false);
+        speakText(cleaned); // 再トライ
       }
     } else {
-      // ブラウザ標準 (SpeechSynthesis)
+      // ブラウザ標準
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(cleaned);
       utterance.lang = 'ja-JP';
       utterance.rate = 1.0;
-      
       utterance.onend = () => {
         if (currentBook && currentPageIndex < currentBook.pages.length - 1) {
           setTimeout(() => changePage(currentPageIndex + 1, true), 1000);
@@ -154,7 +157,6 @@ export default function LibraryApp() {
           setIsSpeaking(false);
         }
       };
-      
       window.speechSynthesis.speak(utterance);
     }
   };
@@ -193,13 +195,12 @@ export default function LibraryApp() {
     }
   };
 
-  // ★ 画像URL生成 (修正版)
-  // プロンプトが長すぎるとエラーになることがあるので短縮
+  // ★修正: 画像URL生成 (Pollinations API 最新版)
+  // ランダムシードをつけてキャッシュを回避し、確実に生成させる
   const getImageUrl = (prompt?: string) => {
     if (!prompt) return null;
-    // 最初の100文字程度を使う
-    const safePrompt = prompt.substring(0, 100);
-    return `https://image.pollinations.ai/prompt/${encodeURIComponent(safePrompt)}?width=800&height=600&nologo=true&seed=${Math.floor(Math.random() * 1000)}`;
+    const safePrompt = encodeURIComponent(prompt.substring(0, 200)); // 長すぎるとエラーになるのでカット
+    return `https://image.pollinations.ai/prompt/${safePrompt}?width=800&height=600&nologo=true&seed=${Math.floor(Math.random() * 99999)}`;
   };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-amber-50">Loading...</div>;
@@ -267,12 +268,10 @@ export default function LibraryApp() {
                 <div><h3 className="font-bold text-amber-900 truncate max-w-[150px] md:max-w-md">{currentBook.title}</h3><span className="text-xs text-amber-700">Page {currentBook.pages[currentPageIndex].page_number} / {currentBook.pages.length}</span></div>
                 
                 <div className="flex items-center gap-2">
-                  {/* ★音声切り替えスイッチ */}
                   <label className="flex items-center gap-1 text-xs cursor-pointer bg-white px-2 py-1 rounded border border-amber-200">
                     <input type="checkbox" checked={useVoicevox} onChange={() => setUseVoicevox(!useVoicevox)} />
                     美声モード
                   </label>
-                  
                   <button onClick={toggleSpeak} className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold shadow transition ${isSpeaking ? 'bg-orange-500 text-white animate-pulse' : 'bg-white text-orange-600 border border-orange-200'}`}>
                     {isSpeaking ? '🔇 停止' : '🗣️ 連続読上'}
                   </button>
