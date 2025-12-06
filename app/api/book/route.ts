@@ -11,33 +11,35 @@ export async function POST(req: Request) {
     console.log(`執筆開始: ${topic} (${type})`);
 
     const prompt = `
-      あなたはプロのブックライター兼アートディレクターです。
-      以下のテーマで、読者が楽しく学べる「${type === 'story' ? '物語・絵本' : '入門書・参考書'}」を執筆してください。
-
-      【テーマ】
+      You are a professional book writer.
+      Please write a book in **JAPANESE** based on the following theme.
+      
+      【Theme】
       ${topic}
 
-      【ルール】
-      - 全5〜8ページ構成。
-      - ${type === 'study' ? '専門用語には解説を入れ、最後にまとめを入れてください。' : '起承転結を意識し、情景が浮かぶように書いてください。'}
-      - **重要: 各ページの挿絵のイメージを「英語」で作成してください（画像生成AI用）。**
-        - 絵本なら: "cute watercolor style illustration of..."（かわいい水彩画風...）
-        - 参考書なら: "simple diagram style illustration of..."（シンプルな図解風...）
-        - 具体的に何が描かれているか描写してください。
+      【Type】
+      ${type === 'story' ? 'Children\'s Picture Book (Story)' : 'Introductory Book (Study)'}
 
-      【出力フォーマット(JSON)】
-      必ず以下のJSON形式のリストで出力してください。
+      【Rules】
+      1. Write in **JAPANESE** (Language: Japanese).
+      2. Create 5 to 8 pages.
+      3. For each page, provide an **'image_prompt' in English** to generate an illustration.
+         - The image prompt should describe the scene visually (e.g., "cute cat in a forest, watercolor style").
+      4. If it's a story, make it engaging. If it's a study book, make it easy to understand.
+
+      【Output JSON Format】
+      STRICTLY output in the following JSON format:
 
       {
-        "title": "本のタイトル",
+        "title": "Book Title (in Japanese)",
         "pages": [
           { 
             "page_number": 1, 
-            "headline": "見出し", 
-            "content": "本文...", 
-            "image_prompt": "A cute cat sitting on a bench in a park, sunny day, watercolor style" 
+            "headline": "Page Headline (in Japanese)", 
+            "content": "Page Content (in Japanese, about 200-300 characters)", 
+            "image_prompt": "Visual description of this page in English (for AI image generator)" 
           },
-          { "page_number": 2, ... }
+          ...
         ]
       }
     `;
@@ -46,6 +48,7 @@ export async function POST(req: Request) {
     const result = await model.generateContent(prompt);
     const text = result.response.text();
     
+    // JSON抽出
     const jsonStr = text.match(/\{[\s\S]*\}/)?.[0] || "{}";
     const data = JSON.parse(jsonStr);
 

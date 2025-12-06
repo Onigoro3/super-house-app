@@ -9,7 +9,7 @@ type BookPage = {
   page_number: number;
   headline: string;
   content: string;
-  image_prompt?: string; // ★追加: 挿絵の指示
+  image_prompt?: string;
 };
 
 type Book = {
@@ -131,7 +131,7 @@ export default function LibraryApp() {
 
     utterance.onend = () => {
       if (pageIndex < currentBook.pages.length - 1) {
-        setTimeout(() => speakPage(pageIndex + 1), 1000); // 間隔を少し空ける
+        setTimeout(() => speakPage(pageIndex + 1), 1000);
       } else {
         setIsSpeaking(false);
       }
@@ -156,11 +156,12 @@ export default function LibraryApp() {
     setCurrentPageIndex(newIndex);
   };
 
-  // ★ 画像URL生成関数 (Pollinations APIを使用)
+  // ★ 画像URL生成 (Pollinations API)
+  // 日本語プロンプトだと失敗することがあるので、エンコードを確実に行う
   const getImageUrl = (prompt?: string) => {
     if (!prompt) return null;
-    // 日本語が含まれているとエラーになることがあるのでエンコード
-    return `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=800&height=600&nologo=true`;
+    // URLエンコードしてAPIに渡す
+    return `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=800&height=600&nologo=true&seed=${Math.floor(Math.random() * 1000)}`;
   };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-amber-50">Loading...</div>;
@@ -187,7 +188,7 @@ export default function LibraryApp() {
               <div className="bg-white p-6 rounded-lg shadow-sm border border-amber-200">
                 <h2 className="font-bold text-lg text-amber-900 mb-4">✨ 新しい本を執筆する</h2>
                 <div className="flex flex-col gap-4">
-                  <input type="text" value={topic} onChange={e => setTopic(e.target.value)} placeholder="テーマ (例: 勇敢なネコの冒険、わかりやすい相対性理論)" className="border p-3 rounded-lg w-full bg-amber-50 focus:bg-white transition" />
+                  <input type="text" value={topic} onChange={e => setTopic(e.target.value)} placeholder="テーマ (例: 宇宙の歴史、眠れる森の物語)" className="border p-3 rounded-lg w-full bg-amber-50 focus:bg-white transition" />
                   <div className="flex gap-2">
                     <select value={bookType} onChange={e => setBookType(e.target.value)} className="border p-3 rounded-lg bg-white">
                       <option value="study">📖 参考書・入門書</option>
@@ -203,26 +204,25 @@ export default function LibraryApp() {
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
                   {books.map(book => (
                     <div key={book.id} className="group relative flex flex-col gap-2">
-                      <div onClick={() => openBook(book)} className="aspect-[3/4] bg-white rounded-r-lg shadow-lg cursor-pointer hover:-translate-y-2 transition-transform flex flex-col border-l-8 border-indigo-900 overflow-hidden relative">
-                        {/* ★表紙画像 (1ページ目の挿絵を使用) */}
+                      <div onClick={() => openBook(book)} className="aspect-[3/4] bg-white rounded-r-lg shadow-lg cursor-pointer hover:-translate-y-2 transition-transform flex flex-col border-l-8 border-indigo-950 text-white relative overflow-hidden">
+                        {/* 表紙画像 */}
                         {book.pages[0]?.image_prompt ? (
                           <img 
                             src={getImageUrl(book.pages[0].image_prompt) || ''} 
                             alt="cover" 
-                            className="w-full h-full object-cover opacity-80"
+                            className="w-full h-full object-cover opacity-90"
                             loading="lazy"
                           />
                         ) : (
-                          <div className="w-full h-full bg-gradient-to-br from-indigo-900 to-indigo-700"></div>
+                          <div className="w-full h-full bg-gradient-to-br from-indigo-900 to-indigo-700 flex items-center justify-center text-4xl">📖</div>
                         )}
                         
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex flex-col justify-end p-3">
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent flex flex-col justify-end p-3">
                           <h4 className="font-bold text-white text-sm leading-snug line-clamp-2 shadow-sm">{book.title}</h4>
                           <div className="text-xs text-gray-300 mt-1">{book.topic}</div>
                         </div>
                       </div>
                       
-                      {/* 編集・削除 */}
                       <div className="flex items-center justify-between px-1">
                         {editingBookId === book.id ? (
                           <div className="flex gap-1 w-full">
@@ -255,13 +255,13 @@ export default function LibraryApp() {
 
               <div className="flex-1 overflow-y-auto bg-[#fffbf0] flex flex-col md:flex-row">
                 
-                {/* ★ 挿絵エリア (上半分 or 左半分) */}
-                <div className="w-full md:w-1/2 h-64 md:h-auto bg-gray-100 relative shrink-0">
+                {/* ★挿絵エリア */}
+                <div className="w-full md:w-1/2 h-64 md:h-auto bg-gray-100 relative shrink-0 overflow-hidden">
                   {currentBook.pages[currentPageIndex].image_prompt ? (
                     <img 
                       src={getImageUrl(currentBook.pages[currentPageIndex].image_prompt) || ''} 
                       alt="挿絵" 
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-cover transition-opacity duration-500"
                     />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-gray-400">挿絵なし</div>
