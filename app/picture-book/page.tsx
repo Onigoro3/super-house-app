@@ -1,10 +1,8 @@
-// app/picture-book/page.tsx
 'use client';
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import Auth from '../components/Auth';
-// PDF生成用ライブラリの動的インポート準備は関数内で行います
 
 type PageData = {
   page_number: number;
@@ -30,7 +28,7 @@ export default function PictureBookApp() {
 
   const [topic, setTopic] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
-  const [isSavingPDF, setIsSavingPDF] = useState(false); // PDF保存中フラグ
+  const [isSavingPDF, setIsSavingPDF] = useState(false);
   
   const [isSpeaking, setIsSpeaking] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -86,14 +84,12 @@ export default function PictureBookApp() {
     fetchBooks();
   };
 
-  // 画像URL生成
   const getImageUrl = (prompt: string, seed: number) => {
     const safePrompt = encodeURIComponent(prompt.substring(0, 150));
-    // 画像サイズを統一
     return `https://image.pollinations.ai/prompt/${safePrompt}?width=1024&height=768&nologo=true&seed=${seed}`;
   };
 
-  // ★ PDF保存機能
+  // PDF保存機能
   const savePDF = async () => {
     if (!currentBook) return;
     setIsSavingPDF(true);
@@ -103,7 +99,6 @@ export default function PictureBookApp() {
       const pdfDoc = await PDFDocument.create();
       pdfDoc.registerFontkit(fontkit);
 
-      // フォント読み込み
       let customFont;
       try {
         const fontBytes = await fetch(window.location.origin + '/fonts/gothic.ttf').then(res => res.arrayBuffer());
@@ -115,19 +110,18 @@ export default function PictureBookApp() {
 
       for (let i = 0; i < currentBook.pages.length; i++) {
         const pageData = currentBook.pages[i];
-        const page = pdfDoc.addPage([595, 842]); // A4サイズ
+        const page = pdfDoc.addPage([595, 842]);
         const { width, height } = page.getSize();
 
         // 画像の埋め込み
         try {
           const imgUrl = getImageUrl(pageData.image_prompt, (currentBook.id * 100) + i);
           const imgBytes = await fetch(imgUrl!).then(res => res.arrayBuffer());
-          const image = await pdfDoc.embedJwt(imgBytes); // PollinationsはJPEGを返すことが多い
+          // ★修正: embedJwt -> embedJpg
+          const image = await pdfDoc.embedJpg(imgBytes); 
           
-          // 画像をページ上部に配置
-          const imgDims = image.scale(0.5);
           page.drawImage(image, {
-            x: (width - 500) / 2, // 中央寄せ（簡易計算）
+            x: (width - 500) / 2,
             y: height - 400,
             width: 500,
             height: 350,
@@ -137,15 +131,13 @@ export default function PictureBookApp() {
           page.drawText("[画像読み込みエラー]", { x: 50, y: height - 200, size: 12, font: customFont, color: rgb(1,0,0) });
         }
 
-        // テキストの描画
         const text = pageData.content;
         const fontSize = 18;
-        // 簡易的な折り返し処理
         let y = height - 450;
         let currentLine = "";
         for (let j = 0; j < text.length; j++) {
            const char = text[j];
-           if (currentLine.length > 25) { // 25文字で改行
+           if (currentLine.length > 25) {
              page.drawText(currentLine, { x: 50, y, size: fontSize, font: customFont, color: rgb(0,0,0) });
              currentLine = "";
              y -= 30;
@@ -154,7 +146,6 @@ export default function PictureBookApp() {
         }
         page.drawText(currentLine, { x: 50, y, size: fontSize, font: customFont, color: rgb(0,0,0) });
 
-        // ページ番号
         page.drawText(`- ${i + 1} -`, { x: width / 2 - 10, y: 30, size: 12, font: customFont, color: rgb(0.5, 0.5, 0.5) });
       }
 
@@ -173,7 +164,6 @@ export default function PictureBookApp() {
     }
   };
 
-  // 読み上げ
   const speakCurrentPage = async () => {
     if (!currentBook) return;
     const text = currentBook.pages[pageIndex].content;
@@ -195,7 +185,7 @@ export default function PictureBookApp() {
 
   const stopSpeaking = () => {
     setIsSpeaking(false);
-    if (audioRef.current) audioRef.current.pause();
+    if (audioRef.current) { audioRef.current.pause(); }
     if (typeof window !== 'undefined') window.speechSynthesis.cancel();
   };
 
@@ -231,8 +221,14 @@ export default function PictureBookApp() {
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-pink-100 text-center">
                 <h2 className="font-bold text-lg text-pink-600 mb-4">✨ どんな絵本を作る？</h2>
                 <div className="flex gap-2 max-w-lg mx-auto">
-                  <input type="text" value={topic} onChange={e => setTopic(e.target.value)} placeholder="例：魔法の森の冒険" className="flex-1 border-2 border-pink-200 p-3 rounded-xl focus:border-pink-400 outline-none transition" />
-                  <button onClick={generateBook} disabled={isGenerating} className="bg-pink-500 text-white px-6 rounded-xl font-bold shadow hover:bg-pink-600 disabled:bg-gray-300">{isGenerating ? '作成中...' : '作る！'}</button>
+                  <input 
+                    type="text" value={topic} onChange={e => setTopic(e.target.value)} 
+                    placeholder="例：魔法の森の冒険" 
+                    className="flex-1 border-2 border-pink-200 p-3 rounded-xl focus:border-pink-400 outline-none transition"
+                  />
+                  <button onClick={generateBook} disabled={isGenerating} className="bg-pink-500 text-white px-6 rounded-xl font-bold shadow hover:bg-pink-600 disabled:bg-gray-300">
+                    {isGenerating ? '作成中...' : '作る！'}
+                  </button>
                 </div>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
@@ -240,11 +236,16 @@ export default function PictureBookApp() {
                   <div key={book.id} className="group relative">
                     <div onClick={() => openBook(book)} className="aspect-[4/3] bg-white rounded-xl shadow-lg cursor-pointer hover:scale-105 transition-transform overflow-hidden border-4 border-white">
                       {book.pages[0]?.image_prompt ? (
-                        <img src={getImageUrl(book.pages[0].image_prompt, (book.id * 100))} alt="cover" className="w-full h-full object-cover" loading="lazy" />
+                        <img 
+                          src={`https://image.pollinations.ai/prompt/${encodeURIComponent(book.pages[0].image_prompt)}?width=400&height=300&nologo=true&seed=${book.id}`} 
+                          alt="cover" className="w-full h-full object-cover" 
+                        />
                       ) : (
                         <div className="w-full h-full bg-pink-100 flex items-center justify-center text-4xl">🎨</div>
                       )}
-                      <div className="absolute bottom-0 inset-x-0 bg-black/60 p-2 text-white"><h4 className="font-bold text-sm truncate">{book.title}</h4></div>
+                      <div className="absolute bottom-0 inset-x-0 bg-black/60 p-2 text-white">
+                        <h4 className="font-bold text-sm truncate">{book.title}</h4>
+                      </div>
                     </div>
                     <button onClick={() => deleteBook(book.id)} className="absolute -top-2 -right-2 bg-gray-500 text-white w-6 h-6 rounded-full text-xs shadow">×</button>
                   </div>
