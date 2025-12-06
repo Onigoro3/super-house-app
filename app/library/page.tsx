@@ -33,7 +33,9 @@ export default function LibraryApp() {
   const [isGenerating, setIsGenerating] = useState(false);
   
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null); // ★音声再生用
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  // ★追加: 音声エンジン切り替え (true: VOICEVOX, false: ブラウザ標準)
+  const [useVoicevox, setUseVoicevox] = useState(true);
 
   const [editingBookId, setEditingBookId] = useState<number | null>(null);
   const [editTitleText, setEditTitleText] = useState('');
@@ -44,7 +46,9 @@ export default function LibraryApp() {
       setLoading(false);
       if (session) fetchBooks();
     });
-    return () => stopSpeaking(); // 画面離脱時に停止
+    return () => {
+      if (typeof window !== 'undefined') window.speechSynthesis.cancel();
+    };
   }, []);
 
   const fetchBooks = async () => {
@@ -103,33 +107,55 @@ export default function LibraryApp() {
     fetchBooks();
   };
 
-  // ★ VOICEVOXで音声を生成して再生
-  const speakText = async (text: string) => {
-    try {
-      // 記号除去
-      const cleanText = text.replace(/[#*_\-`]/g, '').replace(/\n/g, ' ').trim();
-      
-      // VOICEVOX API (無料公開版を使用: https://voicevox.su-shiki.com/su-shikiapis/)
-      // speaker: 2 (四国めたん・ノーマル) / 3 (ずんだもん・ノーマル)
-      const speakerId = 2; 
-      const queryUrl = `https://api.su-shiki.com/v2/voicevox/audio/?text=${encodeURIComponent(cleanText)}&speaker=${speakerId}&pitch=0&speed=100`;
+  const cleanText = (text: string) => {
+    return text.replace(/[#*_\-`]/g, '').replace(/\n/g, ' ').trim();
+  };
 
-      if (audioRef.current) {
-        audioRef.current.src = queryUrl;
-        audioRef.current.play();
-        
-        audioRef.current.onended = () => {
-          // 読み終わったら次のページへ
-          if (currentBook && currentPageIndex < currentBook.pages.length - 1) {
-            setTimeout(() => changePage(currentPageIndex + 1, true), 1000);
-          } else {
-            setIsSpeaking(false);
-          }
-        };
+  // 音声再生（分岐）
+  const speakText = async (text: string) => {
+    const cleaned = cleanText(text);
+
+    if (useVoicevox) {
+      // VOICEVOX (API)
+      try {
+        // speaker: 2 (四国めたん・ノーマル)
+        // 記号除去してエンコード
+        const queryUrl = `https://api.su-shiki.com/v2/voicevox/audio/?text=${encodeURIComponent(cleaned)}&speaker=2&pitch=0&speed=100`;
+
+        if (audioRef.current) {
+          audioRef.current.src = queryUrl;
+          // 再生開始（ユーザー操作の直後でないとブロックされることがあるため注意）
+          await audioRef.current.play();
+          
+          audioRef.current.onended = () => {
+            if (currentBook && currentPageIndex < currentBook.pages.length - 1) {
+              setTimeout(() => changePage(currentPageIndex + 1, true), 1000);
+            } else {
+              setIsSpeaking(false);
+            }
+          };
+        }
+      } catch (e) {
+        console.error("VOICEVOX Error:", e);
+        alert("VOICEVOXの再生に失敗しました。標準音声に切り替えてみてください。");
+        setIsSpeaking(false);
       }
-    } catch (e) {
-      console.error(e);
-      setIsSpeaking(false);
+    } else {
+      // ブラウザ標準 (SpeechSynthesis)
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(cleaned);
+      utterance.lang = 'ja-JP';
+      utterance.rate = 1.0;
+      
+      utterance.onend = () => {
+        if (currentBook && currentPageIndex < currentBook.pages.length - 1) {
+          setTimeout(() => changePage(currentPageIndex + 1, true), 1000);
+        } else {
+          setIsSpeaking(false);
+        }
+      };
+      
+      window.speechSynthesis.speak(utterance);
     }
   };
 
@@ -138,6 +164,7 @@ export default function LibraryApp() {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
     }
+    if (typeof window !== 'undefined') window.speechSynthesis.cancel();
     setIsSpeaking(false);
   };
 
@@ -154,7 +181,7 @@ export default function LibraryApp() {
   };
 
   const changePage = (newIndex: number, autoPlay = false) => {
-    stopSpeaking(); // ページ切り替え時は一旦止める
+    stopSpeaking();
     setCurrentPageIndex(newIndex);
     
     if (autoPlay && currentBook) {
@@ -166,12 +193,13 @@ export default function LibraryApp() {
     }
   };
 
-  // ★ 画像URL生成 (Pollinations API) - 日本語除去処理を追加
+  // ★ 画像URL生成 (修正版)
+  // プロンプトが長すぎるとエラーになることがあるので短縮
   const getImageUrl = (prompt?: string) => {
     if (!prompt) return null;
-    // 万が一日本語が混じっていたら除去（簡易的）
-    // const safePrompt = prompt.replace(/[^\x00-\x7F]/g, ""); 
-    return `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=800&height=600&nologo=true&seed=${Math.floor(Math.random() * 1000)}`;
+    // 最初の100文字程度を使う
+    const safePrompt = prompt.substring(0, 100);
+    return `https://image.pollinations.ai/prompt/${encodeURIComponent(safePrompt)}?width=800&height=600&nologo=true&seed=${Math.floor(Math.random() * 1000)}`;
   };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-amber-50">Loading...</div>;
@@ -179,7 +207,6 @@ export default function LibraryApp() {
 
   return (
     <div className="min-h-screen bg-amber-50 flex flex-col h-screen text-gray-800 font-serif">
-      {/* 音声プレーヤー（隠し） */}
       <audio ref={audioRef} className="hidden" />
 
       <header className="bg-amber-900 text-white p-4 shadow-md flex justify-between items-center z-10 shrink-0">
@@ -236,12 +263,23 @@ export default function LibraryApp() {
 
           {view === 'read' && currentBook && (
             <div className="flex flex-col h-full bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden">
-              <div className="bg-[#fdf6e3] p-4 border-b border-amber-100 flex justify-between items-center shrink-0">
+              <div className="bg-[#fdf6e3] p-4 border-b border-amber-100 flex justify-between items-center shrink-0 flex-wrap gap-2">
                 <div><h3 className="font-bold text-amber-900 truncate max-w-[150px] md:max-w-md">{currentBook.title}</h3><span className="text-xs text-amber-700">Page {currentBook.pages[currentPageIndex].page_number} / {currentBook.pages.length}</span></div>
-                <button onClick={toggleSpeak} className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold shadow transition ${isSpeaking ? 'bg-orange-500 text-white animate-pulse' : 'bg-white text-orange-600 border border-orange-200'}`}>{isSpeaking ? '🔇 停止' : '🗣️ 読んで'}</button>
+                
+                <div className="flex items-center gap-2">
+                  {/* ★音声切り替えスイッチ */}
+                  <label className="flex items-center gap-1 text-xs cursor-pointer bg-white px-2 py-1 rounded border border-amber-200">
+                    <input type="checkbox" checked={useVoicevox} onChange={() => setUseVoicevox(!useVoicevox)} />
+                    美声モード
+                  </label>
+                  
+                  <button onClick={toggleSpeak} className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold shadow transition ${isSpeaking ? 'bg-orange-500 text-white animate-pulse' : 'bg-white text-orange-600 border border-orange-200'}`}>
+                    {isSpeaking ? '🔇 停止' : '🗣️ 連続読上'}
+                  </button>
+                </div>
               </div>
+
               <div className="flex-1 overflow-y-auto bg-[#fffbf0] flex flex-col md:flex-row">
-                {/* 挿絵エリア */}
                 <div className="w-full md:w-1/2 h-64 md:h-auto bg-gray-100 relative shrink-0 overflow-hidden">
                   {currentBook.pages[currentPageIndex].image_prompt ? (
                     <img src={getImageUrl(currentBook.pages[currentPageIndex].image_prompt) || ''} alt="挿絵" className="w-full h-full object-cover transition-opacity duration-500" />
@@ -249,7 +287,6 @@ export default function LibraryApp() {
                     <div className="w-full h-full flex items-center justify-center text-gray-400">挿絵なし</div>
                   )}
                 </div>
-                {/* 本文エリア */}
                 <div className="flex-1 p-6 md:p-10 flex flex-col">
                   <h2 className="text-2xl font-bold text-gray-900 mb-6 border-b pb-2 border-amber-200">{currentBook.pages[currentPageIndex].headline}</h2>
                   <p className="text-lg leading-loose text-gray-800 whitespace-pre-wrap">{currentBook.pages[currentPageIndex].content}</p>
