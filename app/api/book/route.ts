@@ -7,7 +7,15 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
 export async function POST(req: Request) {
   try {
-    const { topic, type } = await req.json();
+    // length ('short' | 'long') を受け取る
+    const { topic, type, length } = await req.json();
+    console.log(`執筆開始: ${topic} (${type}, ${length})`);
+
+    // ページ数の設定
+    // ※Vercelのタイムアウト(10-60秒)を防ぐため、安全な範囲(MAX20ページ程度)に制限します
+    const pageCountInstruction = length === 'long' 
+      ? "Create about 15 to 20 pages. (Make the story deep and detailed)" 
+      : "Create 5 to 8 pages. (Keep it concise)";
 
     const prompt = `
       You are a professional book writer.
@@ -21,12 +29,14 @@ export async function POST(req: Request) {
 
       【Rules】
       1. Write the content in **JAPANESE**.
-      2. Create 5 to 8 pages.
+      2. ${pageCountInstruction}
       3. For each page, provide an **'image_prompt' in ENGLISH**.
          - The image prompt MUST be in English. (e.g., "cute cat in a forest, watercolor style")
          - Do not include Japanese characters in image_prompt.
 
       【Output JSON Format】
+      STRICTLY output in the following JSON format:
+
       {
         "title": "Book Title (in Japanese)",
         "pages": [

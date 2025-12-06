@@ -30,13 +30,13 @@ export default function LibraryApp() {
 
   const [topic, setTopic] = useState('');
   const [bookType, setBookType] = useState('study');
+  const [bookLength, setBookLength] = useState('short'); // ★追加: 長さ選択
   const [isGenerating, setIsGenerating] = useState(false);
   
-  // 音声関連
   const [isSpeaking, setIsSpeaking] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [useVoicevox, setUseVoicevox] = useState(true);
-  const isPlayingRef = useRef(false); // 再生中フラグ（refで即時反映）
+  const isPlayingRef = useRef(false);
 
   const [editingBookId, setEditingBookId] = useState<number | null>(null);
   const [editTitleText, setEditTitleText] = useState('');
@@ -61,7 +61,8 @@ export default function LibraryApp() {
     try {
       const res = await fetch('/api/book', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic, type: bookType }),
+        // ★ length を送信
+        body: JSON.stringify({ topic, type: bookType, length: bookLength }),
       });
       if (!res.ok) throw new Error('生成エラー');
       const data = await res.json();
@@ -78,7 +79,7 @@ export default function LibraryApp() {
         fetchBooks();
         setView('shelf');
       }
-    } catch (e) { alert("執筆に失敗しました"); } 
+    } catch (e) { alert("執筆に失敗しました。長編の場合は時間を置いて試すか、短編にしてみてください。"); } 
     finally { setIsGenerating(false); }
   };
 
@@ -110,11 +111,9 @@ export default function LibraryApp() {
     return text.replace(/[#*_\-`]/g, '').replace(/\n/g, ' ').trim();
   };
 
-  // 標準音声での読み上げ
   const speakStandard = (text: string, onEnd: () => void) => {
     if (typeof window === 'undefined') return;
     window.speechSynthesis.cancel();
-    
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'ja-JP';
     utterance.rate = 1.0;
@@ -122,11 +121,11 @@ export default function LibraryApp() {
     window.speechSynthesis.speak(utterance);
   };
 
-  // 音声再生のメインロジック
   const speakCurrentPage = async () => {
     if (!currentBook) return;
     const page = currentBook.pages[currentPageIndex];
-    const text = cleanText(`${page.headline}。${page.content}`);
+    // ★修正: headline（見出し）を含めず、content（本文）だけを読む
+    const text = cleanText(page.content);
     
     setIsSpeaking(true);
     isPlayingRef.current = true;
@@ -134,12 +133,8 @@ export default function LibraryApp() {
     const handleNext = () => {
       if (!isPlayingRef.current) return;
       if (currentPageIndex < currentBook.pages.length - 1) {
-        // 次のページへ（少し待ってから）
         setTimeout(() => {
-          if (isPlayingRef.current) {
-            setCurrentPageIndex(prev => prev + 1); // ページめくり
-            // useEffectでページ変更を検知して自動再生させるため、ここでは呼ばない
-          }
+          if (isPlayingRef.current) setCurrentPageIndex(prev => prev + 1);
         }, 1000);
       } else {
         stopSpeaking();
@@ -148,70 +143,45 @@ export default function LibraryApp() {
 
     if (useVoicevox) {
       try {
-        // speaker: 47 (ナースロボ_タイプＴ) -> 落ち着いた声で安定している
-        // または 2 (四国めたん)
         const queryUrl = `https://api.tts.quest/v3/voicevox/synthesis?text=${encodeURIComponent(text)}&speaker=2`;
-        
         if (audioRef.current) {
           audioRef.current.src = queryUrl;
           await audioRef.current.play();
           audioRef.current.onended = handleNext;
-          audioRef.current.onerror = () => {
-             console.warn("VOICEVOX再生エラー -> 標準音声へ");
-             speakStandard(text, handleNext);
-          };
+          audioRef.current.onerror = () => { console.warn("VOICEVOX Error"); speakStandard(text, handleNext); };
         }
-      } catch (e) {
-        console.warn("APIエラー -> 標準音声へ");
-        speakStandard(text, handleNext);
-      }
+      } catch (e) { console.warn("API Error"); speakStandard(text, handleNext); }
     } else {
       speakStandard(text, handleNext);
     }
   };
 
-  // ページが変わった時に自動再生（連動用）
   useEffect(() => {
     if (isSpeaking && currentBook) {
-       // ページが変わったので、そのページの読み上げを開始
        speakCurrentPage();
     }
-  }, [currentPageIndex]); // ページ番号が変わるたびに発火
+  }, [currentPageIndex]);
 
   const stopSpeaking = () => {
     isPlayingRef.current = false;
     setIsSpeaking(false);
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-    }
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current.currentTime = 0; }
     if (typeof window !== 'undefined') window.speechSynthesis.cancel();
   };
 
   const toggleSpeak = () => {
-    if (isSpeaking) {
-      stopSpeaking();
-    } else {
-      setIsSpeaking(true);
-      isPlayingRef.current = true;
-      speakCurrentPage();
-    }
+    if (isSpeaking) stopSpeaking();
+    else { setIsSpeaking(true); isPlayingRef.current = true; speakCurrentPage(); }
   };
 
-  // 手動ページ送り
   const changePage = (newIndex: number) => {
-    // 手動操作時は読み上げを止める
     stopSpeaking();
     setCurrentPageIndex(newIndex);
   };
 
-  // ★画像URL生成 (アニメ調に強制)
   const getImageUrl = (prompt?: string) => {
     if (!prompt) return null;
-    // 日本語が含まれているとエラーになるので除去して英語部分だけ抽出（簡易）
-    // またはそのままエンコードして、末尾にスタイル指定を追加
     const safePrompt = encodeURIComponent(prompt.substring(0, 150));
-    // anime style, cute, vivid colors を強制追加
     return `https://image.pollinations.ai/prompt/${safePrompt}%20anime%20style,%20cute,%20vivid%20colors,%20high%20quality?width=800&height=600&nologo=true&seed=${Math.floor(Math.random() * 99999)}`;
   };
 
@@ -243,7 +213,14 @@ export default function LibraryApp() {
                   <input type="text" value={topic} onChange={e => setTopic(e.target.value)} placeholder="テーマ (例: 宇宙の歴史、眠れる森の物語)" className="border p-3 rounded-lg w-full bg-amber-50 focus:bg-white transition" />
                   <div className="flex gap-2">
                     <select value={bookType} onChange={e => setBookType(e.target.value)} className="border p-3 rounded-lg bg-white"><option value="study">📖 参考書</option><option value="story">🧚 絵本</option></select>
-                    <button onClick={generateBook} disabled={isGenerating} className={`flex-1 py-3 rounded-lg font-bold text-white shadow transition ${isGenerating ? 'bg-gray-400' : 'bg-amber-600 hover:bg-amber-700'}`}>{isGenerating ? 'AIが執筆＆作画中...' : '執筆開始'}</button>
+                    
+                    {/* ★長さ選択 */}
+                    <select value={bookLength} onChange={e => setBookLength(e.target.value)} className="border p-3 rounded-lg bg-white">
+                      <option value="short">短編 (5-8頁)</option>
+                      <option value="long">長編 (約20頁)</option>
+                    </select>
+
+                    <button onClick={generateBook} disabled={isGenerating} className={`flex-1 py-3 rounded-lg font-bold text-white shadow transition ${isGenerating ? 'bg-gray-400' : 'bg-amber-600 hover:bg-amber-700'}`}>{isGenerating ? 'AIが執筆中...' : '執筆開始'}</button>
                   </div>
                 </div>
               </div>
@@ -278,18 +255,11 @@ export default function LibraryApp() {
             <div className="flex flex-col h-full bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden">
               <div className="bg-[#fdf6e3] p-4 border-b border-amber-100 flex justify-between items-center shrink-0 flex-wrap gap-2">
                 <div><h3 className="font-bold text-amber-900 truncate max-w-[150px] md:max-w-md">{currentBook.title}</h3><span className="text-xs text-amber-700">Page {currentBook.pages[currentPageIndex].page_number} / {currentBook.pages.length}</span></div>
-                
                 <div className="flex items-center gap-2">
-                  <label className="flex items-center gap-1 text-xs cursor-pointer bg-white px-2 py-1 rounded border border-amber-200">
-                    <input type="checkbox" checked={useVoicevox} onChange={() => setUseVoicevox(!useVoicevox)} />
-                    美声モード
-                  </label>
-                  <button onClick={toggleSpeak} className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold shadow transition ${isSpeaking ? 'bg-orange-500 text-white animate-pulse' : 'bg-white text-orange-600 border border-orange-200'}`}>
-                    {isSpeaking ? '🔇 停止' : '🗣️ 連続読上'}
-                  </button>
+                  <label className="flex items-center gap-1 text-xs cursor-pointer bg-white px-2 py-1 rounded border border-amber-200"><input type="checkbox" checked={useVoicevox} onChange={() => setUseVoicevox(!useVoicevox)} />美声モード</label>
+                  <button onClick={toggleSpeak} className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold shadow transition ${isSpeaking ? 'bg-orange-500 text-white animate-pulse' : 'bg-white text-orange-600 border border-orange-200'}`}>{isSpeaking ? '🔇 停止' : '🗣️ 連続読上'}</button>
                 </div>
               </div>
-
               <div className="flex-1 overflow-y-auto bg-[#fffbf0] flex flex-col md:flex-row">
                 <div className="w-full md:w-1/2 h-64 md:h-auto bg-gray-100 relative shrink-0 overflow-hidden">
                   {currentBook.pages[currentPageIndex].image_prompt ? (
@@ -299,6 +269,7 @@ export default function LibraryApp() {
                   )}
                 </div>
                 <div className="flex-1 p-6 md:p-10 flex flex-col">
+                  {/* ★見出しは表示するが、読み上げ対象からは外れる */}
                   <h2 className="text-2xl font-bold text-gray-900 mb-6 border-b pb-2 border-amber-200">{currentBook.pages[currentPageIndex].headline}</h2>
                   <p className="text-lg leading-loose text-gray-800 whitespace-pre-wrap">{currentBook.pages[currentPageIndex].content}</p>
                   <div className="h-10"></div>
