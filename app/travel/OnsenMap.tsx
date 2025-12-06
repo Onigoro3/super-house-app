@@ -33,7 +33,7 @@ type OnsenSpot = {
 function MapUpdater({ center }: { center: [number, number] }) {
   const map = useMap();
   useEffect(() => {
-    map.setView(center, 13);
+    map.setView(center, 14); // ★ズームレベルを14に変更（より詳細に）
   }, [center, map]);
   return null;
 }
@@ -57,8 +57,9 @@ export default function OnsenMap() {
         fetchOnsens(latitude, longitude);
       },
       (err) => {
-        alert('位置情報の取得に失敗しました');
-        setLoading(false);
+        // 取得失敗時は東京駅周辺
+        setCenter([35.6812, 139.7671]);
+        fetchOnsens(35.6812, 139.7671);
       }
     );
   }, []);
@@ -83,7 +84,6 @@ export default function OnsenMap() {
         id: el.id,
         lat: el.lat,
         lon: el.lon,
-        // 名前がない場合はタグから推測、それもなければ「温泉施設」
         name: el.tags.name || el.tags['name:ja'] || el.tags['name:en'] || '温泉施設',
       }));
 
@@ -100,32 +100,35 @@ export default function OnsenMap() {
   if (!center) return <div className="h-full flex items-center justify-center text-red-500">位置情報が必要です</div>;
 
   return (
-    <div className="h-full w-full relative">
-      <MapContainer center={center} zoom={13} style={{ height: '100%', width: '100%' }}>
+    <div className="h-full w-full relative rounded-2xl overflow-hidden border-2 border-white shadow-lg">
+      <MapContainer center={center} zoom={14} style={{ height: '100%', width: '100%' }}>
+        
+        {/* ★ここを変更: Googleマップのタイルを使用 */}
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution='&copy; Google Maps'
+          url="https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}"
         />
+        
         <MapUpdater center={center} />
 
-        {/* 現在地マーカー */}
+        {/* 現在地マーカー (青) */}
         <Marker position={center}>
           <Popup>現在地</Popup>
         </Marker>
 
-        {/* 温泉マーカー */}
+        {/* 温泉マーカー (赤) */}
         {onsens.map((onsen) => (
           <Marker key={onsen.id} position={[onsen.lat, onsen.lon]} icon={onsenIcon}>
             <Popup>
-              <div className="text-center">
-                <p className="font-bold text-sm mb-2">{onsen.name}</p>
+              <div className="text-center p-1">
+                <p className="font-bold text-sm mb-2 text-gray-800">{onsen.name}</p>
                 <a 
-                  href={`https://www.google.com/maps/dir/?api=1&destination=${onsen.lat},${onsen.lon}`}
+                  href={`https://www.google.com/maps/dir/?api=1&origin=${onsen.lat},${onsen.lon}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="text-xs bg-blue-600 text-white px-3 py-1 rounded shadow block"
+                  className="text-xs bg-blue-600 text-white px-3 py-1.5 rounded shadow block hover:bg-blue-700 no-underline"
                 >
-                  Googleマップで行く
+                  Googleマップでナビ開始
                 </a>
               </div>
             </Popup>
@@ -133,8 +136,9 @@ export default function OnsenMap() {
         ))}
       </MapContainer>
       
-      <div className="absolute top-2 right-2 z-[1000] bg-white p-2 rounded shadow opacity-90 text-xs font-bold text-red-600">
-        ♨️ 半径5km以内の温泉: {onsens.length}件
+      <div className="absolute top-3 right-3 z-[1000] bg-white/90 backdrop-blur p-2 rounded-lg shadow-lg border border-gray-100">
+        <p className="text-xs font-bold text-gray-600">半径5km以内の温泉</p>
+        <p className="text-xl font-bold text-red-500 text-center">{onsens.length}<span className="text-xs text-gray-400 ml-1">件</span></p>
       </div>
     </div>
   );
