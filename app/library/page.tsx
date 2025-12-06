@@ -9,7 +9,6 @@ type BookPage = {
   page_number: number;
   headline: string;
   content: string;
-  image_prompt?: string;
 };
 
 type Book = {
@@ -30,7 +29,7 @@ export default function LibraryApp() {
 
   const [topic, setTopic] = useState('');
   const [bookType, setBookType] = useState('study');
-  const [bookLength, setBookLength] = useState('short'); // ★追加: 長さ選択
+  const [bookLength, setBookLength] = useState('short');
   const [isGenerating, setIsGenerating] = useState(false);
   
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -55,13 +54,13 @@ export default function LibraryApp() {
     if (data) setBooks(data);
   };
 
+  // --- AIによる生成 ---
   const generateBook = async () => {
     if (!topic) return alert("テーマを入力してください");
     setIsGenerating(true);
     try {
       const res = await fetch('/api/book', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        // ★ length を送信
         body: JSON.stringify({ topic, type: bookType, length: bookLength }),
       });
       if (!res.ok) throw new Error('生成エラー');
@@ -79,10 +78,61 @@ export default function LibraryApp() {
         fetchBooks();
         setView('shelf');
       }
-    } catch (e) { alert("執筆に失敗しました。長編の場合は時間を置いて試すか、短編にしてみてください。"); } 
+    } catch (e) { alert("執筆に失敗しました"); } 
     finally { setIsGenerating(false); }
   };
 
+  // --- テキストファイル取り込み ---
+  const handleTextUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const text = event.target?.result as string;
+      if (!text) return;
+
+      // 本のタイトル（ファイル名から拡張子を除く）
+      const title = file.name.replace(/\.[^/.]+$/, "");
+
+      // ページ分割ロジック（約300文字ごと、または改行で区切るなど）
+      // ここではシンプルに文字数で分割します
+      const charsPerPage = 300;
+      const pages: BookPage[] = [];
+      let pageNum = 1;
+
+      for (let i = 0; i < text.length; i += charsPerPage) {
+        const chunk = text.substring(i, i + charsPerPage);
+        // 最初の行を見出しっぽく扱う（簡易）
+        const headline = pageNum === 1 ? title : `ページ ${pageNum}`;
+        
+        pages.push({
+          page_number: pageNum,
+          headline: headline,
+          content: chunk.trim()
+        });
+        pageNum++;
+      }
+
+      // DB保存
+      const { error } = await supabase.from('books').insert([{
+        title: title,
+        topic: 'インポート',
+        pages: pages
+      }]);
+
+      if (!error) {
+        alert(`「${title}」を取り込みました！`);
+        fetchBooks();
+        e.target.value = ''; // リセット
+      } else {
+        alert('保存に失敗しました');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  // --- 操作系 ---
   const openBook = (book: Book) => {
     setCurrentBook(book);
     setCurrentPageIndex(0);
@@ -107,10 +157,9 @@ export default function LibraryApp() {
     fetchBooks();
   };
 
-  const cleanText = (text: string) => {
-    return text.replace(/[#*_\-`]/g, '').replace(/\n/g, ' ').trim();
-  };
+  const cleanText = (text: string) => text.replace(/[#*_\-`]/g, '').replace(/\n/g, ' ').trim();
 
+  // --- 読み上げ ---
   const speakStandard = (text: string, onEnd: () => void) => {
     if (typeof window === 'undefined') return;
     window.speechSynthesis.cancel();
@@ -124,7 +173,7 @@ export default function LibraryApp() {
   const speakCurrentPage = async () => {
     if (!currentBook) return;
     const page = currentBook.pages[currentPageIndex];
-    // ★修正: headline（見出し）を含めず、content（本文）だけを読む
+    // 見出しは読まず、本文だけ読む
     const text = cleanText(page.content);
     
     setIsSpeaking(true);
@@ -179,12 +228,6 @@ export default function LibraryApp() {
     setCurrentPageIndex(newIndex);
   };
 
-  const getImageUrl = (prompt?: string) => {
-    if (!prompt) return null;
-    const safePrompt = encodeURIComponent(prompt.substring(0, 150));
-    return `https://image.pollinations.ai/prompt/${safePrompt}%20anime%20style,%20cute,%20vivid%20colors,%20high%20quality?width=800&height=600&nologo=true&seed=${Math.floor(Math.random() * 99999)}`;
-  };
-
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-amber-50">Loading...</div>;
   if (!session) return <Auth onLogin={() => {}} />;
 
@@ -208,34 +251,33 @@ export default function LibraryApp() {
           {view === 'shelf' && (
             <div className="space-y-8 pb-20">
               <div className="bg-white p-6 rounded-lg shadow-sm border border-amber-200">
-                <h2 className="font-bold text-lg text-amber-900 mb-4">✨ 新しい本を執筆する</h2>
+                <div className="flex justify-between items-center mb-4">
+                   <h2 className="font-bold text-lg text-amber-900">✨ 新しい本を執筆する</h2>
+                   {/* ★追加: テキスト取込ボタン */}
+                   <label className="text-sm bg-amber-100 text-amber-800 px-3 py-1 rounded cursor-pointer hover:bg-amber-200">
+                     📄 テキスト読込
+                     <input type="file" accept=".txt" onChange={handleTextUpload} className="hidden" />
+                   </label>
+                </div>
+                
                 <div className="flex flex-col gap-4">
                   <input type="text" value={topic} onChange={e => setTopic(e.target.value)} placeholder="テーマ (例: 宇宙の歴史、眠れる森の物語)" className="border p-3 rounded-lg w-full bg-amber-50 focus:bg-white transition" />
                   <div className="flex gap-2">
                     <select value={bookType} onChange={e => setBookType(e.target.value)} className="border p-3 rounded-lg bg-white"><option value="study">📖 参考書</option><option value="story">🧚 絵本</option></select>
-                    
-                    {/* ★長さ選択 */}
-                    <select value={bookLength} onChange={e => setBookLength(e.target.value)} className="border p-3 rounded-lg bg-white">
-                      <option value="short">短編 (5-8頁)</option>
-                      <option value="long">長編 (約20頁)</option>
-                    </select>
-
+                    <select value={bookLength} onChange={e => setBookLength(e.target.value)} className="border p-3 rounded-lg bg-white"><option value="short">短編 (5頁)</option><option value="long">長編 (20頁)</option></select>
                     <button onClick={generateBook} disabled={isGenerating} className={`flex-1 py-3 rounded-lg font-bold text-white shadow transition ${isGenerating ? 'bg-gray-400' : 'bg-amber-600 hover:bg-amber-700'}`}>{isGenerating ? 'AIが執筆中...' : '執筆開始'}</button>
                   </div>
                 </div>
               </div>
+
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
                 {books.map(book => (
                   <div key={book.id} className="group relative flex flex-col gap-2">
-                    <div onClick={() => openBook(book)} className="aspect-[3/4] bg-white rounded-r-lg shadow-lg cursor-pointer hover:-translate-y-2 transition-transform flex flex-col border-l-8 border-indigo-950 text-white relative overflow-hidden">
-                      {book.pages[0]?.image_prompt ? (
-                        <img src={getImageUrl(book.pages[0].image_prompt) || ''} alt="cover" className="w-full h-full object-cover opacity-90" loading="lazy" />
-                      ) : (
-                        <div className="w-full h-full bg-gradient-to-br from-indigo-900 to-indigo-700 flex items-center justify-center text-4xl">📖</div>
-                      )}
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent flex flex-col justify-end p-3">
-                        <h4 className="font-bold text-white text-sm leading-snug line-clamp-2 shadow-sm">{book.title}</h4>
-                      </div>
+                    {/* 表紙（画像なし） */}
+                    <div onClick={() => openBook(book)} className="aspect-[3/4] bg-gradient-to-br from-indigo-900 to-indigo-700 rounded-r-lg shadow-lg cursor-pointer hover:-translate-y-2 transition-transform flex flex-col justify-center items-center border-l-8 border-indigo-950 text-white relative overflow-hidden p-3 text-center">
+                       <div className="text-4xl mb-2">📖</div>
+                       <h4 className="font-bold text-sm leading-snug line-clamp-3">{book.title}</h4>
+                       {book.topic === 'インポート' && <span className="text-xs bg-white/20 px-1 rounded mt-1">取込</span>}
                     </div>
                     <div className="flex items-center justify-between px-1">
                       {editingBookId === book.id ? (
@@ -251,6 +293,7 @@ export default function LibraryApp() {
             </div>
           )}
 
+          {/* 読書モード（画像エリア削除・テキスト全画面） */}
           {view === 'read' && currentBook && (
             <div className="flex flex-col h-full bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden">
               <div className="bg-[#fdf6e3] p-4 border-b border-amber-100 flex justify-between items-center shrink-0 flex-wrap gap-2">
@@ -260,21 +303,16 @@ export default function LibraryApp() {
                   <button onClick={toggleSpeak} className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold shadow transition ${isSpeaking ? 'bg-orange-500 text-white animate-pulse' : 'bg-white text-orange-600 border border-orange-200'}`}>{isSpeaking ? '🔇 停止' : '🗣️ 連続読上'}</button>
                 </div>
               </div>
-              <div className="flex-1 overflow-y-auto bg-[#fffbf0] flex flex-col md:flex-row">
-                <div className="w-full md:w-1/2 h-64 md:h-auto bg-gray-100 relative shrink-0 overflow-hidden">
-                  {currentBook.pages[currentPageIndex].image_prompt ? (
-                    <img src={getImageUrl(currentBook.pages[currentPageIndex].image_prompt) || ''} alt="挿絵" className="w-full h-full object-cover transition-opacity duration-500" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-gray-400">挿絵なし</div>
-                  )}
-                </div>
-                <div className="flex-1 p-6 md:p-10 flex flex-col">
-                  {/* ★見出しは表示するが、読み上げ対象からは外れる */}
-                  <h2 className="text-2xl font-bold text-gray-900 mb-6 border-b pb-2 border-amber-200">{currentBook.pages[currentPageIndex].headline}</h2>
-                  <p className="text-lg leading-loose text-gray-800 whitespace-pre-wrap">{currentBook.pages[currentPageIndex].content}</p>
-                  <div className="h-10"></div>
+
+              {/* コンテンツエリア (フルサイズ) */}
+              <div className="flex-1 overflow-y-auto bg-[#fffbf0] p-6 md:p-12">
+                <div className="max-w-3xl mx-auto">
+                   <h2 className="text-2xl font-bold text-gray-900 mb-6 border-b pb-2 border-amber-200">{currentBook.pages[currentPageIndex].headline}</h2>
+                   <p className="text-lg leading-loose text-gray-800 whitespace-pre-wrap font-medium">{currentBook.pages[currentPageIndex].content}</p>
+                   <div className="h-20"></div>
                 </div>
               </div>
+
               <div className="bg-[#fdf6e3] p-4 border-t border-amber-100 flex justify-between items-center shrink-0">
                 <button onClick={() => changePage(Math.max(0, currentPageIndex - 1))} disabled={currentPageIndex === 0} className="bg-amber-800 text-white px-6 py-3 rounded-lg disabled:opacity-30 shadow hover:bg-amber-700 font-bold flex-1 mr-2">◀ 前へ</button>
                 <button onClick={() => changePage(Math.min(currentBook.pages.length - 1, currentPageIndex + 1))} disabled={currentPageIndex === currentBook.pages.length - 1} className="bg-amber-800 text-white px-6 py-3 rounded-lg disabled:opacity-30 shadow hover:bg-amber-700 font-bold flex-1 ml-2">次へ ▶</button>
