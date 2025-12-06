@@ -20,15 +20,19 @@ type SavedPlan = { id: number; title: string; destination: string; plan_data: Tr
 export default function TravelApp() {
   const [session, setSession] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  
+  // ★画面切り替え ('new' | 'history' | 'map')
   const [currentView, setCurrentView] = useState<'new' | 'history' | 'map'>('new');
   const [showMenu, setShowMenu] = useState(false); 
 
+  // 入力フォーム
   const [destination, setDestination] = useState('');
   const [duration, setDuration] = useState('日帰り');
   const [budget, setBudget] = useState('30000');
   const [people, setPeople] = useState('2');
   const [theme, setTheme] = useState('');
   const [transport, setTransport] = useState('車');
+  // 現在地
   const [origin, setOrigin] = useState('現在地を取得中...');
 
   const [plan, setPlan] = useState<TravelPlan | null>(null);
@@ -43,6 +47,7 @@ export default function TravelApp() {
       if (session) fetchHistory();
     });
 
+    // GPS取得
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(async (pos) => {
         try {
@@ -78,6 +83,7 @@ export default function TravelApp() {
     if (error) alert('保存失敗'); else { alert('保存しました！'); fetchHistory(); }
   };
   const deleteHistory = async (id: number) => { if (!confirm('削除しますか？')) return; await supabase.from('travel_plans').delete().eq('id', id); fetchHistory(); };
+  
   const loadHistory = (saved: SavedPlan) => { 
     setPlan(saved.plan_data); setDestination(saved.destination); 
     setCurrentView('new'); 
@@ -113,7 +119,7 @@ export default function TravelApp() {
     } catch (e) { alert('保存エラー'); } finally { setIsSaving(false); }
   };
 
-  const openGoogleMapsRoute = (spots: Spot[]) => { if (spots.length < 1) return; const dest = spots[spots.length - 1].name; const wp = spots.slice(0, -1).map(s => s.name).join('|'); window.open(`http://googleusercontent.com/maps.google.com/9{encodeURIComponent(dest)}&waypoints=${encodeURIComponent(wp)}&travelmode=${transport==='車'?'driving':'transit'}`, '_blank'); };
+  const openGoogleMapsRoute = (spots: Spot[]) => { if (spots.length < 1) return; const dest = spots[spots.length - 1].name; const wp = spots.slice(0, -1).map(s => s.name).join('|'); window.open(`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(dest)}&waypoints=${encodeURIComponent(wp)}&travelmode=${transport==='車'?'driving':'transit'}`, '_blank'); };
   const FormattedText = ({ text }: { text: string }) => { const parts = text.split(/(https?:\/\/[^\s]+)/g); return <span>{parts.map((p,i)=>p.match(/^https?:\/\//)?<a key={i} href={p} target="_blank" rel="noreferrer" className="text-blue-600 underline mx-1 bg-blue-50 px-1 rounded text-xs">Link</a>:<span key={i}>{p}</span>)}</span>; };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-gray-100">Loading...</div>;
@@ -138,12 +144,13 @@ export default function TravelApp() {
         </div>
       )}
 
+      {/* ヘッダー */}
       <header className="bg-teal-600 text-white p-3 shadow-md flex justify-between items-center z-10 shrink-0">
         <div className="flex items-center gap-3">
           <Link href="/" className="bg-teal-700 hover:bg-teal-800 px-3 py-1 rounded-lg font-bold text-xs transition">🔙 ホーム</Link>
           <h1 className="text-lg font-bold">✈ お出かけ</h1>
         </div>
-        {/* ★ここが追加されました */}
+        {/* ★ここが復活した三本線ボタンです */}
         <button onClick={() => setShowMenu(true)} className="p-2 rounded hover:bg-teal-700">
           <div className="w-6 h-0.5 bg-white mb-1.5"></div>
           <div className="w-6 h-0.5 bg-white mb-1.5"></div>
@@ -152,20 +159,21 @@ export default function TravelApp() {
       </header>
 
       <div className="flex-1 overflow-hidden relative">
-        {/* 温泉マップ */}
+        {/* --- 温泉マップ --- */}
         {currentView === 'map' && (
            <div className="h-full w-full animate-fadeIn">
              <OnsenMap />
            </div>
         )}
 
-        {/* プラン作成 & 履歴 */}
+        {/* --- プラン作成 & 履歴 (スクロール可) --- */}
         {currentView !== 'map' && (
           <div className="h-full overflow-y-auto p-4 md:p-8">
              <div className="max-w-md mx-auto space-y-6">
                {currentView === 'new' && (
                 <>
                   <div className="bg-white p-5 rounded-xl shadow-sm border border-teal-100 flex flex-col gap-4">
+                    {/* 現在地表示 */}
                     <div className="text-xs text-gray-500 flex items-center gap-1"><span>📍 出発地:</span><span className="font-bold text-teal-700">{origin}</span></div>
                     <div><label className="text-xs font-bold text-gray-500">行き先</label><input type="text" value={destination} onChange={e => setDestination(e.target.value)} placeholder="例：京都" className="w-full border p-2 rounded-lg bg-gray-50" /></div>
                     <div className="grid grid-cols-2 gap-3">
