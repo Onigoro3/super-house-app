@@ -1,8 +1,6 @@
-// app/api/relay/route.ts
 import { NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-if (!process.env.GEMINI_API_KEY) console.error("APIキー設定エラー");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
 export async function POST(req: Request) {
@@ -10,26 +8,21 @@ export async function POST(req: Request) {
     const { title, context } = await req.json();
 
     const prompt = `
-      あなたはクリエイティブな小説家です。
-      ユーザーと協力して「${title}」というタイトルの小説を書いています。
+      小説の続きを書いてください。
+      タイトル: ${title}
+      直前の文脈: "${context}"
       
-      これまでのあらすじ（直前の文脈）:
-      "${context}"
-
-      【ルール】
-      - 文脈の流れを汲んで、物語の続きを書いてください。
-      - 面白くなるように、少し意外な展開や、情景描写を加えてください。
-      - 長さは100〜300文字程度で、区切りの良いところで止めてください（ユーザーにバトンを渡すため）。
-      - 日本語で書いてください。
-
-      続きの文章:
+      ルール:
+      - 100〜300文字程度
+      - 文脈を汲んで面白く展開させる
+      - 日本語
     `;
 
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    // ★修正: gemini-2.5-flash
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
     const result = await model.generateContent(prompt);
-    const text = result.response.text();
-
-    return NextResponse.json({ text });
+    
+    return NextResponse.json({ text: result.response.text() });
 
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
