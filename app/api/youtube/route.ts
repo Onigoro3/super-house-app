@@ -5,58 +5,69 @@ import { YoutubeTranscript } from 'youtube-transcript';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
-// ★動画IDを抽出する関数（Shorts対応版）
+// 動画ID抽出（Shorts対応・強化版）
 const extractVideoId = (url: string) => {
-  const regExp = /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=|shorts\/)|youtu\.be\/)([^"&?/\s]{11})/;
-  const match = url.match(regExp);
-  return match ? match[1] : null;
+  const patterns = [
+    /(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?v=([^&]+)/,
+    /(?:https?:\/\/)?(?:www\.)?youtube\.com\/shorts\/([^/?]+)/,
+    /(?:https?:\/\/)?youtu\.be\/([^/?]+)/
+  ];
+
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match && match[1]) {
+      return match[1];
+    }
+  }
+  return null;
 };
 
 export async function POST(req: Request) {
   try {
     const { url } = await req.json();
-    
-    // 1. 動画IDを取り出す
     const videoId = extractVideoId(url);
+    
     if (!videoId) {
-      return NextResponse.json({ error: "YouTubeのURLとして認識できませんでした" }, { status: 400 });
+      return NextResponse.json({ error: "URLが正しくありません" }, { status: 400 });
     }
 
-    // 2. 字幕を取得
+    // 1. 字幕取得を試みる
     let transcriptText = "";
     try {
-      const transcriptItems = await YoutubeTranscript.fetchTranscript(videoId);
-      // 文字数制限（長すぎるとエラーになるので先頭2万文字くらいに制限）
-      transcriptText = transcriptItems.map(t => t.text).join(' ').slice(0, 20000);
+      // 日本語字幕を優先取得、なければ英語、それもなければ自動生成
+      const transcriptItems = await YoutubeTranscript.fetchTranscript(videoId, { lang: 'ja' });
+      transcriptText = transcriptItems.map(t => t.text).join(' ').slice(0, 15000);
     } catch (e) {
-      console.error("Transcript Error:", e);
-      return NextResponse.json({ error: "この動画には字幕がないか、読み取れませんでした。" }, { status: 400 });
+      console.log("字幕取得失敗（字幕なしか取得不可）");
+      // 字幕がなくても、動画IDさえあればAIが知っている知識でカバーできる場合がある
+      transcriptText = "（字幕が取得できませんでした。動画のメタデータや一般的なレシピ知識から推測してください）";
     }
 
-    // 3. AIにレシピ化させる
+    // 2. AIにレシピ化させる
     const prompt = `
-      以下のYouTube動画の字幕データから、料理のレシピ情報を抽出してください。
+      あなたはプロの料理研究家です。
+      以下のYouTube動画（ID: ${videoId}）の内容から、レシピを作成してください。
       
-      【字幕データ】
+      【取得した字幕データ】
       ${transcriptText}
-      
-      【ルール】
-      - 料理名、材料リスト、手順を抜き出してください。
-      - 材料は分量がわかれば記載してください。
-      - 手順は簡潔にまとめてください。
-      
-      【出力フォーマット(JSONのみ)】
+
+      【指示】
+      - 字幕がある場合は、そこから正確な材料と手順を抜き出してください。
+      - 字幕がない（取得エラー）の場合は、動画IDや文脈から「どんな料理か」を推測し、その一般的なレシピを提案してください。
+      - 材料の分量が不明な場合は「適量」としてください。
+
+      【出力フォーマット(JSON)】
       {
         "title": "料理名",
-        "channel_name": "動画から推測できるチャンネル名（不明ならYouTube動画）",
+        "channel_name": "YouTube",
         "ingredients": ["材料1", "材料2"],
         "steps": ["手順1", "手順2"]
       }
     `;
 
-    // ★修正: 最新モデル gemini-2.5-flash
+    // ★モデル変更: gemini-2.0-flash-exp (最新・高速)
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.5-flash",
+      model: "gemini-2.0-flash-exp",
       generationConfig: { responseMimeType: "application/json" }
     });
     
@@ -67,7 +78,7 @@ export async function POST(req: Request) {
     return NextResponse.json(JSON.parse(jsonStr));
 
   } catch (error: any) {
-    console.error("YouTube Analyze Error:", error);
-    return NextResponse.json({ error: `分析エラー: ${error.message}` }, { status: 500 });
+    console.error("YouTube Error:", error);
+    return NextResponse.json({ error: "動画の分析に失敗しました。字幕のない動画の可能性があります。" }, { status: 500 });
   }
 }

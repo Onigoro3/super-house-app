@@ -1,6 +1,6 @@
 // app/api/travel/route.ts
 import { NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
 
 if (!process.env.GEMINI_API_KEY) console.error("APIキー設定エラー");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
@@ -8,17 +8,24 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 export async function POST(req: Request) {
   try {
     const { destination, duration, budget, people, theme, transport, origin } = await req.json();
-    const startPoint = origin || '大阪府 堺市';
-    
-    const isOnsen = theme.includes("温泉") || theme.includes("サウナ");
-    const special = isOnsen ? "行き先周辺の高評価な温泉・サウナを5つリストアップし、URL付きで提案してください。" : "";
+    const startPoint = origin || '大阪府 堺市'; // デフォルト出発地
+    console.log(`旅行計画: ${startPoint} -> ${destination}`);
+
+    // 特化モード判定
+    const isOnsenMode = theme.includes("温泉") || theme.includes("サウナ");
+    const specialInstruction = isOnsenMode ? `
+      【★温泉・サウナ特化モード】
+      1. 行き先周辺で高評価の温泉・温浴施設を**5つ**ピックアップし、「♨️ おすすめ温泉5選」として詳細欄にURL付きでリストアップしてください。
+      2. 夕食は地元の美味しいお店を提案してください。
+      3. 帰路は${startPoint}へのルートを設定してください。
+    ` : "";
 
     const prompt = `
       あなたはプロのトラベルコンシェルジュです。
-      以下の条件で、旅行プランを作成してください。
+      以下の条件で、最高の旅行プランを作成してください。
 
-      【条件】
-      - 出発: ${startPoint}
+      【旅行条件】
+      - 出発地: ${startPoint}
       - 行き先: ${destination}
       - 期間: ${duration}
       - 人数: ${people}人
@@ -26,49 +33,77 @@ export async function POST(req: Request) {
       - 移動手段: ${transport}
       - テーマ: ${theme}
 
-      【ルール】
-      1. ${startPoint}からの距離を計算して記載。
-      2. スポットのURLを必ず含める。
-      3. ${special}
-      4. JSON形式のみ出力。
-      
-      【出力JSON】
+      【重要ルール】
+      1. **距離:** 各スポットへの「${startPoint}からの移動距離(km)」または前のスポットからの距離を計算して記載。
+      2. **URL:** 各スポットの公式サイトやGoogleマップのURLを必ず含める。
+      3. **時間帯:** 「${duration}」に合わせて開始時刻を調整する。
+      4. 実在するスポットをGoogle検索して提案する。
+
+      ${specialInstruction}
+
+      【出力フォーマット(JSON)】
+      必ず以下のJSON形式のみを出力してください。Markdown記号は不要です。
+
       {
-        "title": "旅行タイトル", 
+        "title": "タイトル",
         "concept": "コンセプト",
         "schedule": [
-          { 
-            "day": 1, 
-            "spots": [ 
+          {
+            "day": 1,
+            "spots": [
               { 
                 "time": "10:00", 
                 "name": "スポット名", 
                 "desc": "詳細説明", 
-                "cost": "約1000円", 
+                "cost": "約1,000円", 
                 "distance": "約10km", 
-                "url": "https://..." 
-              } 
-            ] 
+                "url": "https://..."
+              }
+            ]
           }
         ]
       }
     `;
 
-    // ★修正: 最新モデル gemini-2.5-flash & 検索ツール有効化
+    // ★修正: 最新モデル 'gemini-2.5-flash' を使用
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.5-flash", 
-      tools: [{ googleSearch: {} } as any],
-      generationConfig: { responseMimeType: "application/json" } 
+      model: "gemini-2.5-flash",
+      tools: [{ googleSearch: {} } as any], // 検索ツール有効化
+      generationConfig: { responseMimeType: "application/json" },
+      // 安全フィルター解除（誤検知防止）
+      safetySettings: [
+        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+      ]
     });
     
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
-    const jsonStr = text.match(/\{[\s\S]*\}/)?.[0] || "{}";
+    // タイムアウト対策（15秒）
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 15000));
     
-    return NextResponse.json(JSON.parse(jsonStr));
+    const aiPromise = (async () => {
+      const result = await model.generateContent(prompt);
+      return result.response.text();
+    })();
+
+    // 競走
+    let text = await Promise.race([aiPromise, timeoutPromise]) as string;
+
+    // クリーニング（```json ... ``` を削除）
+    text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    
+    const data = JSON.parse(text);
+
+    return NextResponse.json(data);
 
   } catch (error: any) {
     console.error("Travel Plan Error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    
+    let msg = "プラン作成に失敗しました。";
+    if (error.message === "Timeout") msg = "検索に時間がかかりすぎました。もう一度お試しください。";
+    else if (error.message.includes("404")) msg = "AIモデルのエラーです。管理者に連絡してください。";
+    
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
