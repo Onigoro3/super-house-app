@@ -12,89 +12,85 @@ export async function POST(req: Request) {
 
     const isOnsenMode = theme.includes("温泉") || theme.includes("サウナ");
     const specialInstruction = isOnsenMode ? `
-      【★温泉・サウナ特化モード】
-      1. 行き先周辺で高評価の温泉・温浴施設を**5つ**ピックアップし、「♨️ おすすめ温泉5選」として詳細欄にURL付きでリストアップしてください。
-      2. 夕食は地元の美味しいお店を提案してください。
-      3. 帰路は${startPoint}へのルートを設定してください。
+      【★温泉・サウナ特化】
+      行き先周辺の高評価な温泉・温浴施設を5つリストアップし、URL付きで提案してください。
     ` : "";
 
-    const prompt = `
+    // プロンプト（共通）
+    const getPrompt = (useSearch: boolean) => `
       あなたはプロのトラベルコンシェルジュです。
-      以下の条件で、最高の旅行プランを作成してください。
+      旅行プランを作成してください。
 
-      【旅行条件】
-      - 出発地: ${startPoint}
+      【条件】
+      - 出発: ${startPoint}
       - 行き先: ${destination}
       - 期間: ${duration}
       - 人数: ${people}人
-      - 予算: 1人あたり${budget}円
-      - 移動手段: ${transport}
+      - 予算: 1人${budget}円
+      - 移動: ${transport}
       - テーマ: ${theme}
 
-      【重要ルール】
-      1. **距離:** 各スポットへの「${startPoint}からの移動距離(km)」または前のスポットからの距離を計算して記載。
-      2. **URL:** 各スポットの公式サイトやGoogleマップのURLを必ず含める。
-      3. **時間帯:** 「${duration}」に合わせて開始時刻を調整する。
-      4. 実在するスポットをGoogle検索して提案する。
+      【ルール】
+      1. ${startPoint}からの距離を計算して記載。
+      2. スポットのURLを含める（${useSearch ? '実在するURLを検索して' : '公式サイトやGoogle検索のURLを推測して'}）。
+      3. ${specialInstruction}
+      4. JSON形式のみ出力。Markdown記号は不要。
 
-      ${specialInstruction}
-
-      【出力フォーマット(JSON)】
-      必ず以下のJSON形式のみを出力してください。Markdown記号は不要です。
-
+      Output JSON Schema:
       {
-        "title": "タイトル",
-        "concept": "コンセプト",
+        "title": "Title", "concept": "Concept",
         "schedule": [
-          {
-            "day": 1,
-            "spots": [
-              { 
-                "time": "10:00", 
-                "name": "スポット名", 
-                "desc": "詳細説明", 
-                "cost": "約1,000円", 
-                "distance": "約10km", 
-                "url": "https://..."
-              }
-            ]
-          }
+          { "day": 1, "spots": [ { "time": "10:00", "name": "Name", "desc": "Desc", "cost": "1000yen", "distance": "10km", "url": "http..." } ] }
         ]
       }
     `;
 
-    // ★修正: 最新モデル gemini-2.5-flash & 安全フィルター解除
-    const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.5-flash",
-      tools: [{ googleSearch: {} } as any],
-      generationConfig: { responseMimeType: "application/json" },
-      safetySettings: [
-        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-      ]
-    });
-    
-    // タイムアウト対策（20秒に延長）
-    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 20000));
-    
-    const aiPromise = (async () => {
-      const result = await model.generateContent(prompt);
-      return result.response.text();
-    })();
+    // 生成実行関数
+    const generatePlan = async (useSearch: boolean) => {
+      const model = genAI.getGenerativeModel({ 
+        model: "gemini-2.5-flash", // 最新モデル
+        tools: useSearch ? [{ googleSearch: {} } as any] : undefined, // 検索ツールの有無
+        generationConfig: { responseMimeType: "application/json" },
+        safetySettings: [
+          { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        ]
+      });
 
-    let text = await Promise.race([aiPromise, timeoutPromise]) as string;
+      const prompt = getPrompt(useSearch);
+      
+      // タイムアウト設定（検索ありなら8秒、なしなら15秒まで待つ）
+      const timeoutMs = useSearch ? 8000 : 15000;
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), timeoutMs));
+      
+      const aiPromise = model.generateContent(prompt);
+      
+      const result: any = await Promise.race([aiPromise, timeoutPromise]);
+      return result.response.text();
+    };
+
+    let text = "";
+    
+    try {
+      // ★作戦1: 検索ありでトライ
+      console.log("Attempting with Google Search...");
+      text = await generatePlan(true);
+    } catch (e) {
+      // ★作戦2: 失敗（タイムアウト等）したら検索なしでリトライ
+      console.warn("Search failed or timed out, falling back to knowledge base.", e);
+      text = await generatePlan(false);
+    }
 
     // クリーニング
     text = text.replace(/```json/g, '').replace(/```/g, '').trim();
-    
-    return NextResponse.json(JSON.parse(text));
+    const data = JSON.parse(text);
+
+    return NextResponse.json(data);
 
   } catch (error: any) {
     console.error("Travel Plan Error:", error);
-    let msg = "プラン作成に失敗しました。";
-    if (error.message === "Timeout") msg = "検索に時間がかかりすぎました。もう一度お試しください。";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json({ error: "プラン作成に失敗しました。条件を変えて再度お試しください。" }, { status: 500 });
   }
 }
