@@ -1,28 +1,22 @@
 // app/api/travel/route.ts
 import { NextResponse } from 'next/server';
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
-if (!process.env.GEMINI_API_KEY) console.error("APIキー設定エラー");
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+// APIキー確認
+const apiKey = process.env.GEMINI_API_KEY;
+if (!apiKey) console.error("APIキー設定エラー: GEMINI_API_KEYがありません");
+const genAI = new GoogleGenerativeAI(apiKey!);
 
 export async function POST(req: Request) {
   try {
     const { destination, duration, budget, people, theme, transport, origin } = await req.json();
     const startPoint = origin || '大阪府 堺市';
 
-    console.log(`旅行計画生成（高速モード）: ${startPoint} -> ${destination}`);
-
-    // 特化モード判定
-    const isOnsenMode = theme.includes("温泉") || theme.includes("サウナ");
-    const specialInstruction = isOnsenMode ? `
-      【★温泉・サウナ特化】
-      行き先周辺の有名な温泉・温浴施設を5つリストアップし、「♨️ おすすめ温泉5選」として詳細欄に記載してください。
-      （URLはあなたが知っている公式サイトやGoogle検索URLを記載してください）
-    ` : "";
+    console.log(`🚀 旅行プラン作成開始: ${startPoint} -> ${destination}`);
 
     const prompt = `
       あなたはプロのトラベルコンシェルジュです。
-      以下の条件で旅行プランを作成し、JSON形式で出力してください。
+      以下の条件で旅行プランを作成し、**JSON形式のみ**で出力してください。
 
       【条件】
       - 出発: ${startPoint}
@@ -33,64 +27,79 @@ export async function POST(req: Request) {
       - テーマ: ${theme}
 
       【ルール】
-      1. ${startPoint}からの概算距離を計算して記載。
-      2. 各スポットのURLを記載（公式サイトまたはGoogleマップ検索URL）。
-      3. ${specialInstruction}
-      4. 必ず正しいJSON形式で出力すること。Markdown記号（\`\`\`json）は不要。
+      1. 各スポットの「${startPoint}からの距離」を概算で記載。
+      2. スポットのURL（公式サイトやGoogleマップ検索URL）を含める。
+      3. ${theme.includes('温泉') || theme.includes('サウナ') ? '周辺の温泉施設を5つリストアップし、URL付きで提案' : '観光スポットを提案'}。
+      4. 余計な文章は一切書かず、以下のJSONのみを出力すること。
 
-      【出力フォーマット(JSON)】
+      Output JSON Schema:
       {
-        "title": "旅行タイトル",
+        "title": "タイトル",
         "concept": "コンセプト",
         "schedule": [
-          {
-            "day": 1,
-            "spots": [
-              { 
-                "time": "10:00", 
-                "name": "スポット名", 
-                "desc": "詳細説明", 
-                "cost": "約1,000円", 
-                "distance": "約10km", 
-                "url": "https://..." 
-              }
-            ]
-          }
+          { "day": 1, "spots": [ { "time": "10:00", "name": "Name", "desc": "Desc", "cost": "1000yen", "distance": "10km", "url": "http..." } ] }
         ]
       }
     `;
 
-    // ★重要変更: 検索ツールを使わず、AIの知識のみで生成（爆速化）
-    // モデルは最新かつ高速な gemini-2.0-flash を使用
-    const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.0-flash",
-      generationConfig: { responseMimeType: "application/json" },
-      safetySettings: [
-        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-      ]
-    });
+    // ★試行するモデルのリスト（優先順）
+    // 2.5系が不安定な場合があるため、確実に動くラインナップに変更
+    const modelsToTry = [
+      "gemini-2.0-flash-exp", // 最新・爆速
+      "gemini-1.5-flash",     // 定番・高速
+      "gemini-1.5-pro",       // 高性能・安定
+    ];
 
-    // 生成実行
-    const result = await model.generateContent(prompt);
-    let text = result.response.text();
+    let lastError = null;
 
-    // クリーニング（念のため）
-    text = text.replace(/```json/g, '').replace(/```/g, '').trim();
-    
-    // JSONパース確認
-    try {
-      const data = JSON.parse(text);
-      return NextResponse.json(data);
-    } catch (e) {
-      console.error("JSON Parse Error", text);
-      throw new Error("AIの応答がJSON形式ではありませんでした");
+    // ★モデルを順番に試すループ
+    for (const modelName of modelsToTry) {
+      try {
+        console.log(`👉 モデル ${modelName} で生成を試みます...`);
+        
+        const model = genAI.getGenerativeModel({ 
+          model: modelName,
+          generationConfig: { responseMimeType: "application/json" }
+        });
+
+        // タイムアウト設定 (12秒)
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 12000));
+        const aiPromise = model.generateContent(prompt);
+        
+        const result: any = await Promise.race([aiPromise, timeoutPromise]);
+        const text = result.response.text();
+
+        console.log(`✅ ${modelName} で生成成功！`);
+
+        // JSONクリーニング（強力版）
+        // 最初の '{' から 最後の '}' までを抜き出す
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+          throw new Error("AIの応答にJSONが含まれていませんでした");
+        }
+        
+        const cleanJson = jsonMatch[0];
+        const data = JSON.parse(cleanJson);
+        
+        // 成功したら即リターン
+        return NextResponse.json(data);
+
+      } catch (e: any) {
+        console.warn(`⚠️ ${modelName} で失敗:`, e.message);
+        lastError = e;
+        // 次のモデルへ...
+      }
     }
 
+    // 全モデル失敗した場合
+    console.error("❌ 全モデルで失敗しました");
+    throw lastError || new Error("全てのAIモデルが応答しませんでした");
+
   } catch (error: any) {
-    console.error("Travel Plan Error:", error);
-    return NextResponse.json({ error: `作成エラー: ${error.message}` }, { status: 500 });
+    console.error("Travel API Critical Error:", error);
+    return NextResponse.json(
+      { error: `プラン作成に失敗しました: ${error.message}` }, 
+      { status: 500 }
+    );
   }
 }
