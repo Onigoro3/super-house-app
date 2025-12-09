@@ -10,9 +10,11 @@ export default function Launcher() {
   const [loading, setLoading] = useState(true);
   const [time, setTime] = useState<string>('');
   
+  // ページネーション用
   const [currentPage, setCurrentPage] = useState(0);
   const ITEMS_PER_PAGE = 9;
 
+  // スワイプ判定用
   const touchStartX = useRef(0);
   const touchEndX = useRef(0);
 
@@ -33,12 +35,13 @@ export default function Launcher() {
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-gray-900 text-white">Loading...</div>;
   if (!session) return <Auth onLogin={() => {}} />;
 
+  // ★全アプリリスト
   const apps = [
-    // --- 1ページ目 (メイン機能) ---
+    // --- 1ページ目 ---
     { name: 'AI献立アプリ', icon: '🍳', color: 'bg-orange-400', link: '/house', desc: '在庫・献立' },
     { name: 'お出かけ', icon: '✈', color: 'bg-teal-500', link: '/travel', desc: 'AI旅行計画' },
-    { name: 'AI絵本', icon: '🎨', color: 'bg-pink-500', link: '/picture-book', desc: 'アニメ絵本作成' }, // ★ここに追加しました！
-
+    { name: 'AI絵本', icon: '🎨', color: 'bg-pink-500', link: '/picture-book', desc: 'アニメ絵本' },
+    
     { name: 'AIライブラリ', icon: '📚', color: 'bg-amber-600', link: '/library', desc: '読書・学習' },
     { name: 'メモ帳', icon: '📝', color: 'bg-yellow-400', link: '/memo', desc: 'AIマインドマップ' },
     { name: '資産管理', icon: '💰', color: 'bg-yellow-500', link: '/money', desc: '家計簿' },
@@ -47,37 +50,38 @@ export default function Launcher() {
     { name: 'PDF編集', icon: '📄', color: 'bg-red-500', link: '/pdf', desc: '編集・作成' },
     { name: 'チャットAI', icon: '🤖', color: 'bg-purple-500', link: '/chat', desc: '執事とお喋り' },
     
-    // --- 2ページ目以降 ---
+    // --- 2ページ目 ---
     { name: '天気', icon: '☀', color: 'bg-cyan-400', link: '/weather', desc: '天気予報' },
-    // app/page.tsx
-    // ...
     { name: '表計算', icon: '📊', color: 'bg-green-600', link: '/spreadsheet', desc: 'CSV・Excel編集' },
-    // ...
+    { name: 'RPG', icon: '⚔️', color: 'bg-indigo-600', link: '/adventure', desc: 'AIアドベンチャー' },
+    
     { name: 'ToDo', icon: '✅', color: 'bg-green-500', link: '#', desc: '準備中' },
     { name: 'カレンダー', icon: '📅', color: 'bg-sky-500', link: '#', desc: '準備中' },
     { name: '設定', icon: '⚙', color: 'bg-gray-500', link: '#', desc: 'アカウント設定' },
   ];
 
+  // ページ計算
   const totalPages = Math.ceil(apps.length / ITEMS_PER_PAGE);
   const displayedApps = apps.slice(
     currentPage * ITEMS_PER_PAGE,
     (currentPage + 1) * ITEMS_PER_PAGE
   );
 
+  // スワイプ処理
   const handleTouchStart = (e: React.TouchEvent) => { touchStartX.current = e.touches[0].clientX; };
   const handleTouchMove = (e: React.TouchEvent) => { touchEndX.current = e.touches[0].clientX; };
   const handleTouchEnd = () => {
     const diff = touchStartX.current - touchEndX.current;
-    const threshold = 50;
-    if (Math.abs(diff) > threshold) {
-      if (diff > 0 && currentPage < totalPages - 1) { setCurrentPage(p => p + 1); }
-      else if (diff < 0 && currentPage > 0) { setCurrentPage(p => p - 1); }
+    if (Math.abs(diff) > 50) {
+      if (diff > 0 && currentPage < totalPages - 1) setCurrentPage(p => p + 1);
+      else if (diff < 0 && currentPage > 0) setCurrentPage(p => p - 1);
     }
   };
 
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6 flex flex-col items-center selection:bg-indigo-500 selection:text-white overflow-hidden">
       
+      {/* ヘッダー */}
       <div className="w-full max-w-lg mb-8 mt-4 flex justify-between items-end shrink-0">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Good Morning</h1>
@@ -88,6 +92,7 @@ export default function Launcher() {
         </div>
       </div>
 
+      {/* アプリグリッドエリア */}
       <div 
         className="flex-1 w-full max-w-lg flex flex-col min-h-0"
         onTouchStart={handleTouchStart}
@@ -97,8 +102,8 @@ export default function Launcher() {
         <div className="grid grid-cols-3 gap-x-6 gap-y-8 w-full content-start py-4">
           {displayedApps.map((app) => (
             <Link 
-              key={app.name}
-              href={app.link} 
+              key={app.name} // ★ここが重要: 名前をキーにすることで正しく識別させます
+              href={app.link} // ★ここが重要: 配列のindexではなく、appオブジェクトのリンクを直接使います
               className="flex flex-col items-center group cursor-pointer active:scale-95 transition-transform duration-100"
             >
               <div 
@@ -114,6 +119,7 @@ export default function Launcher() {
           ))}
         </div>
 
+        {/* ページインジケーター */}
         <div className="flex justify-center gap-2 mt-auto pb-4">
           {Array.from({ length: totalPages }).map((_, i) => (
             <button 
@@ -125,6 +131,7 @@ export default function Launcher() {
         </div>
       </div>
       
+      {/* ドック (固定) */}
       <div className="shrink-0 pb-4">
         <div className="bg-white/10 backdrop-blur-xl p-4 rounded-3xl flex gap-6 border border-white/10 shadow-2xl">
           <Link href="/house" className="w-12 h-12 bg-orange-400 rounded-xl flex items-center justify-center text-2xl shadow-lg hover:-translate-y-2 transition-transform duration-300">🍳</Link>
