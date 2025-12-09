@@ -1,3 +1,4 @@
+// app/api/adventure/route.ts
 import { NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
@@ -5,7 +6,7 @@ if (!process.env.GEMINI_API_KEY) console.error("APIキー設定エラー");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
 export async function POST(req: Request) {
-  // ★修正: エラー時にも参照できるように、変数をここで定義しておく
+  // ★重要: エラー時にも参照できるように、変数をここで定義しておく
   let currentStatus = { hp: 100, inventory: [] };
 
   try {
@@ -48,13 +49,14 @@ export async function POST(req: Request) {
       }
     `;
 
+    // ★高速な 2.0 Flash モデルを使用
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-1.5-flash",
+      model: "gemini-2.0-flash",
       generationConfig: { responseMimeType: "application/json" }
     });
 
     // 履歴の整形
-    const chatHistory = history ? history.slice(-10).map((h: any) => ({
+    const chatHistory = history ? history.slice(-5).map((h: any) => ({
       role: h.role === 'user' ? 'user' : 'model',
       parts: [{ text: h.text }]
     })) : [];
@@ -69,17 +71,30 @@ export async function POST(req: Request) {
     const result = await chat.sendMessage("判定をお願いします");
     let text = result.response.text();
     
-    // JSONクリーニング
+    // JSONクリーニング（念入りに）
     text = text.replace(/```json/g, '').replace(/```/g, '').trim();
 
-    const data = JSON.parse(text);
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      // JSONパースに失敗した場合の救済措置
+      console.warn("JSON Parse Failed, using fallback");
+      data = {
+        text: text, // 生のテキストをそのまま表示
+        new_status: currentStatus, // ステータスは維持
+        game_over: false,
+        choices: ["（読み込みエラー：自由に入力してください）"]
+      };
+    }
+
     return NextResponse.json(data);
 
   } catch (error: any) {
     console.error("Adventure Error:", error);
-    // エラー時は直前のステータスをそのまま返す
+    // エラー時は直前のステータスをそのまま返す（ゲームを壊さない）
     return NextResponse.json({ 
-      text: "申し訳ありません。通信が不安定なようです。もう一度同じ行動を試してみてください。",
+      text: "申し訳ありません。通信が混み合っているようです。もう一度同じ行動を試してみてください。",
       new_status: currentStatus,
       game_over: false,
       choices: []
