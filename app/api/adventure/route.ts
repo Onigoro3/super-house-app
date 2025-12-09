@@ -1,4 +1,3 @@
-// app/api/adventure/route.ts
 import { NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
@@ -6,8 +5,17 @@ if (!process.env.GEMINI_API_KEY) console.error("APIキー設定エラー");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
 export async function POST(req: Request) {
+  // ★修正: エラー時にも参照できるように、変数をここで定義しておく
+  let currentStatus = { hp: 100, inventory: [] };
+
   try {
-    const { genre, action, history, currentStatus } = await req.json();
+    const body = await req.json();
+    const { genre, action, history } = body;
+    
+    // データがあれば更新
+    if (body.currentStatus) {
+      currentStatus = body.currentStatus;
+    }
 
     const prompt = `
       あなたはTRPG（テーブルトークRPG）の熟練ゲームマスターです。
@@ -40,16 +48,16 @@ export async function POST(req: Request) {
       }
     `;
 
-    // 安定版の1.5-flashを使用
     const model = genAI.getGenerativeModel({ 
       model: "gemini-1.5-flash",
       generationConfig: { responseMimeType: "application/json" }
     });
 
-    const chatHistory = history.slice(-10).map((h: any) => ({
+    // 履歴の整形
+    const chatHistory = history ? history.slice(-10).map((h: any) => ({
       role: h.role === 'user' ? 'user' : 'model',
       parts: [{ text: h.text }]
-    }));
+    })) : [];
 
     const chat = model.startChat({
       history: [
@@ -61,7 +69,7 @@ export async function POST(req: Request) {
     const result = await chat.sendMessage("判定をお願いします");
     let text = result.response.text();
     
-    // ★修正: JSON以外の余計な文字を徹底的に削除
+    // JSONクリーニング
     text = text.replace(/```json/g, '').replace(/```/g, '').trim();
 
     const data = JSON.parse(text);
@@ -69,7 +77,7 @@ export async function POST(req: Request) {
 
   } catch (error: any) {
     console.error("Adventure Error:", error);
-    // エラー時もJSONを返してフロントエンドを止めない
+    // エラー時は直前のステータスをそのまま返す
     return NextResponse.json({ 
       text: "申し訳ありません。通信が不安定なようです。もう一度同じ行動を試してみてください。",
       new_status: currentStatus,
