@@ -41,11 +41,9 @@ export async function POST(req: Request) {
       }
     `;
 
-    // ★重要: モデル設定
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-1.5-flash", // 高速・安定モデル
+      model: "gemini-1.5-flash",
       generationConfig: { responseMimeType: "application/json" },
-      // ★重要: 安全フィルターを解除（ゲーム内の戦闘表現を許可するため）
       safetySettings: [
         { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
         { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -54,26 +52,32 @@ export async function POST(req: Request) {
       ]
     });
 
-    const chatHistory = history ? history.slice(-5).map((h: any) => ({
+    // ★修正: 履歴の先頭が 'model' ならダミーの 'user' を追加する
+    let chatHistory = history ? history.slice(-10).map((h: any) => ({
       role: h.role === 'user' ? 'user' : 'model',
       parts: [{ text: h.text }]
     })) : [];
 
-    // タイムアウト対策（8秒で切る）
-    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 8000));
+    if (chatHistory.length > 0 && chatHistory[0].role === 'model') {
+      chatHistory.unshift({
+        role: 'user',
+        parts: [{ text: '（ゲーム開始）' }]
+      });
+    }
+
+    // タイムアウト対策（10秒）
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 10000));
     
     const chatPromise = (async () => {
       const chat = model.startChat({
-        history: [...chatHistory, { role: "user", parts: [{ text: prompt }] }]
+        history: chatHistory
       });
-      const result = await chat.sendMessage("判定");
+      const result = await chat.sendMessage(prompt); // プロンプトをメッセージとして送信
       return result.response.text();
     })();
 
-    // 競走させる
     let text = await Promise.race([chatPromise, timeoutPromise]) as string;
     
-    // クリーニング
     text = text.replace(/```json/g, '').replace(/```/g, '').trim();
     const data = JSON.parse(text);
 
@@ -82,7 +86,6 @@ export async function POST(req: Request) {
   } catch (error: any) {
     console.error("Adventure Error:", error);
     
-    // エラー内容をユーザーに伝える
     let errorMsg = "通信エラーが発生しました。";
     if (error.message === "Timeout") errorMsg = "AIの応答が間に合いませんでした。もう一度試してください。";
     else if (error.message.includes("404")) errorMsg = "AIモデルが見つかりません。API設定を確認してください。";
