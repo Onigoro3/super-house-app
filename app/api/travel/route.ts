@@ -10,7 +10,7 @@ export async function POST(req: Request) {
     const { destination, duration, budget, people, theme, transport, origin } = await req.json();
     const startPoint = origin || '大阪府 堺市';
 
-    console.log(`旅行計画生成開始: ${startPoint} -> ${destination}`);
+    console.log(`旅行計画生成（高速モード）: ${startPoint} -> ${destination}`);
 
     // 特化モード判定
     const isOnsenMode = theme.includes("温泉") || theme.includes("サウナ");
