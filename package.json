@@ -21,6 +21,7 @@
     "react-dom": "^19.2.1",
     "react-leaflet": "^5.0.0",
     "react-pdf": "^10.2.0",
+    "xlsx": "^0.18.5",
     "youtubei.js": "^16.0.1"
   },
   "devDependencies": {
