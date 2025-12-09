@@ -49,6 +49,10 @@ export default function Launcher() {
     
     // --- 2ページ目以降 ---
     { name: '天気', icon: '☀', color: 'bg-cyan-400', link: '/weather', desc: '天気予報' },
+    // app/page.tsx
+    // ...
+    { name: '表計算', icon: '📊', color: 'bg-green-600', link: '/spreadsheet', desc: 'CSV・Excel編集' },
+    // ...
     { name: 'ToDo', icon: '✅', color: 'bg-green-500', link: '#', desc: '準備中' },
     { name: 'カレンダー', icon: '📅', color: 'bg-sky-500', link: '#', desc: '準備中' },
     { name: '設定', icon: '⚙', color: 'bg-gray-500', link: '#', desc: 'アカウント設定' },
