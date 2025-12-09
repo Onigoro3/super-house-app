@@ -1,103 +1,99 @@
 // app/api/adventure/route.ts
 import { NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
 
 if (!process.env.GEMINI_API_KEY) console.error("APIキー設定エラー");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
 export async function POST(req: Request) {
-  // ★重要: エラー時にも参照できるように、変数をここで定義しておく
   let currentStatus = { hp: 100, inventory: [] };
 
   try {
     const body = await req.json();
     const { genre, action, history } = body;
     
-    // データがあれば更新
     if (body.currentStatus) {
       currentStatus = body.currentStatus;
     }
 
     const prompt = `
-      あなたはTRPG（テーブルトークRPG）の熟練ゲームマスターです。
-      プレイヤーの行動に対して、物語の続きを描写してください。
+      あなたはTRPGのゲームマスターです。
+      以下の設定と行動に基づいて、物語の続きを描写してください。
 
       【設定】
       - ジャンル: ${genre}
-      - 現在の状態: HP=${currentStatus.hp}, 所持品=${currentStatus.inventory.join(',')}
+      - 現在: HP=${currentStatus.hp}, 所持品=${currentStatus.inventory.join(',')}
 
       【プレイヤーの行動】
       "${action}"
 
       【ルール】
-      1. プレイヤーの行動の成否を判定し、結果を描写してください。
-      2. 臨場感あふれる小説のような文体で書いてください。
-      3. ダメージを受けたらHPを減らし、アイテムを得たら所持品に追加してください。
-      4. 物語が完結（クリア/死亡）したら game_over: true にしてください。
+      1. 行動の成否を判定し、臨場感ある小説風に描写してください。
+      2. ダメージやアイテム取得があればステータスを更新してください。
+      3. ゲームオーバーまたはクリア時は game_over: true にしてください。
 
-      【出力フォーマット(JSON)】
-      必ず以下のJSON形式のみを出力してください。Markdownの記号（\`\`\`json 等）は含めないでください。
-
+      【出力(JSON)】
       {
-        "text": "ゲームマスターの描写テキスト...",
-        "new_status": {
-          "hp": 90,
-          "inventory": ["剣", "薬草"]
-        },
+        "text": "描写テキスト...",
+        "new_status": { "hp": 90, "inventory": ["..."] },
         "game_over": false,
-        "choices": ["次の行動案1", "次の行動案2"]
+        "choices": ["選択肢1", "選択肢2"]
       }
     `;
 
-    // ★高速な 2.0 Flash モデルを使用
+    // ★重要: モデル設定
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.0-flash",
-      generationConfig: { responseMimeType: "application/json" }
+      model: "gemini-1.5-flash", // 高速・安定モデル
+      generationConfig: { responseMimeType: "application/json" },
+      // ★重要: 安全フィルターを解除（ゲーム内の戦闘表現を許可するため）
+      safetySettings: [
+        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+      ]
     });
 
-    // 履歴の整形
     const chatHistory = history ? history.slice(-5).map((h: any) => ({
       role: h.role === 'user' ? 'user' : 'model',
       parts: [{ text: h.text }]
     })) : [];
 
-    const chat = model.startChat({
-      history: [
-        ...chatHistory,
-        { role: "user", parts: [{ text: prompt }] }
-      ]
-    });
-
-    const result = await chat.sendMessage("判定をお願いします");
-    let text = result.response.text();
+    // タイムアウト対策（8秒で切る）
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 8000));
     
-    // JSONクリーニング（念入りに）
-    text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    const chatPromise = (async () => {
+      const chat = model.startChat({
+        history: [...chatHistory, { role: "user", parts: [{ text: prompt }] }]
+      });
+      const result = await chat.sendMessage("判定");
+      return result.response.text();
+    })();
 
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch (e) {
-      // JSONパースに失敗した場合の救済措置
-      console.warn("JSON Parse Failed, using fallback");
-      data = {
-        text: text, // 生のテキストをそのまま表示
-        new_status: currentStatus, // ステータスは維持
-        game_over: false,
-        choices: ["（読み込みエラー：自由に入力してください）"]
-      };
-    }
+    // 競走させる
+    let text = await Promise.race([chatPromise, timeoutPromise]) as string;
+    
+    // クリーニング
+    text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    const data = JSON.parse(text);
 
     return NextResponse.json(data);
 
   } catch (error: any) {
     console.error("Adventure Error:", error);
-    // エラー時は直前のステータスをそのまま返す（ゲームを壊さない）
+    
+    // エラー内容をユーザーに伝える
+    let errorMsg = "通信エラーが発生しました。";
+    if (error.message === "Timeout") errorMsg = "AIの応答が間に合いませんでした。もう一度試してください。";
+    else if (error.message.includes("404")) errorMsg = "AIモデルが見つかりません。API設定を確認してください。";
+    else if (error.message.includes("SAFETY")) errorMsg = "AIが「不適切な表現」と判断して停止しました。別の行動を試してください。";
+    else errorMsg = `エラー: ${error.message}`;
+
     return NextResponse.json({ 
-      text: "申し訳ありません。通信が混み合っているようです。もう一度同じ行動を試してみてください。",
+      text: `【システムメッセージ】\n${errorMsg}\n\n(ステータスは維持されます。もう一度アクションを入力してください)`,
       new_status: currentStatus,
       game_over: false,
-      choices: []
+      choices: ["再試行"]
     });
   }
 }
