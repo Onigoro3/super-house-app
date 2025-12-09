@@ -2,47 +2,52 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// APIキーの確認
-const apiKey = process.env.GEMINI_API_KEY;
-if (!apiKey) console.error("APIキー設定エラー");
-const genAI = new GoogleGenerativeAI(apiKey!);
+if (!process.env.GEMINI_API_KEY) console.error("APIキー設定エラー");
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
 export async function POST(req: Request) {
   try {
+    // ★ origin（出発地）を受け取る
     const { destination, duration, budget, people, theme, transport, origin } = await req.json();
-    const startPoint = origin || '大阪府 堺市';
+    const startPoint = origin || '大阪府 堺市'; // 万が一取れなかったら堺市
+    console.log(`旅行計画: ${startPoint} -> ${destination}`);
 
-    console.log(`旅行計画生成（安定版）: ${startPoint} -> ${destination}`);
-
-    // 特化モード判定
     const isOnsenMode = theme.includes("温泉") || theme.includes("サウナ");
-    const specialInstruction = isOnsenMode ? `
-      【★温泉・サウナ特化】
-      行き先周辺の有名な温泉・温浴施設を5つリストアップし、「♨️ おすすめ温泉5選」として詳細欄に記載してください。
-      （URLはあなたが知っている公式サイトやGoogle検索URLを記載してください）
-    ` : "";
+    let specialInstruction = "";
+
+    if (isOnsenMode) {
+      specialInstruction = `
+      【★温泉・サウナ特化モード】
+      ユーザーは温泉愛好家です。
+      1. **温泉タイム**: 行き先周辺で高評価の温泉・温浴施設を**5つ**ピックアップし、「♨️ おすすめ温泉5選」として詳細欄にURL付きでリストアップしてください。
+      2. **夕食**: 地元の美味しいお店を提案してください。
+      3. **帰路**: ${startPoint}への帰路を設定してください。
+      `;
+    }
 
     const prompt = `
       あなたはプロのトラベルコンシェルジュです。
-      以下の条件で旅行プランを作成し、JSON形式で出力してください。
+      以下の条件で、最高の旅行プランを作成してください。
 
-      【条件】
-      - 出発: ${startPoint}
+      【旅行条件】
+      - 出発地: ${startPoint}
       - 行き先: ${destination}
       - 期間: ${duration}
+      - 人数: ${people}人
+      - 予算: 1人${budget}円
       - 移動: ${transport}
-      - 予算: ${budget}円
       - テーマ: ${theme}
 
-      【ルール】
-      1. ${startPoint}からの概算距離を計算して記載。
-      2. 各スポットのURLを記載（公式サイトまたはGoogleマップ検索URL）。
-      3. ${specialInstruction}
-      4. 必ず正しいJSON形式で出力すること。Markdown記号（\`\`\`json）は不要。
+      【重要ルール】
+      1. **距離計算:** 各スポットへの距離は、必ず**「${startPoint}」からの移動距離**、または前のスポットからの距離を計算して記載してください。
+      2. **URL:** スポットの公式サイトやGoogleマップのURLを含めてください。
+      3. **時間帯:** 「${duration}」に合わせて開始時刻を調整してください。
+
+      ${specialInstruction}
 
       【出力フォーマット(JSON)】
       {
-        "title": "旅行タイトル",
+        "title": "タイトル",
         "concept": "コンセプト",
         "schedule": [
           {
@@ -50,11 +55,11 @@ export async function POST(req: Request) {
             "spots": [
               { 
                 "time": "10:00", 
-                "name": "スポット名", 
-                "desc": "詳細説明", 
+                "name": "場所名", 
+                "desc": "詳細", 
                 "cost": "約1,000円", 
-                "distance": "約10km", 
-                "url": "https://..." 
+                "distance": "${startPoint}から約〇km",
+                "url": "https://..."
               }
             ]
           }
@@ -62,45 +67,20 @@ export async function POST(req: Request) {
       }
     `;
 
-    // ★修正: 最も安定・高速な 'gemini-1.5-flash' を使用
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-1.5-flash",
-      // JSONモードは使わず、テキスト生成させてから抽出する（互換性のため）
+      model: "gemini-2.5-flash",
+      tools: [{ googleSearch: {} } as any]
     });
-
-    // タイムアウト対策（9秒）
-    const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("Timeout")), 9000)
-    );
     
-    const aiPromise = model.generateContent(prompt);
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+    const jsonStr = text.match(/\{[\s\S]*\}/)?.[0] || "{}";
     
-    // 競走させる
-    const result: any = await Promise.race([aiPromise, timeoutPromise]);
-    let text = result.response.text();
-
-    // クリーニング（念のため）
-    text = text.replace(/```json/g, '').replace(/```/g, '').trim();
-    
-    // JSONパース確認
-    let data;
-    try {
-      // 最初の '{' から 最後の '}' までを抜き出す（余計な文字対策）
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        data = JSON.parse(jsonMatch[0]);
-      } else {
-        throw new Error("JSONが見つかりません");
-      }
-    } catch (e) {
-      console.error("JSON Parse Error", text);
-      throw new Error("AIの応答形式が正しくありませんでした");
-    }
-
-    return NextResponse.json(data);
+    return NextResponse.json(JSON.parse(jsonStr));
 
   } catch (error: any) {
-    console.error("Travel Plan Error:", error);
-    return NextResponse.json({ error: `作成エラー: ${error.message}` }, { status: 500 });
+    console.error("Travel Error:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
