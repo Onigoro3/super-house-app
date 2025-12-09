@@ -28,27 +28,27 @@ export async function POST(req: Request) {
       5. 物語が完結（クリアまたは死亡）した場合は game_over: true にしてください。
 
       【出力フォーマット(JSON)】
-      必ず以下のJSON形式のみを出力してください。
+      必ず以下のJSON形式のみを出力してください。Markdownタグは含めないでください。
 
       {
         "text": "ゲームマスターの描写テキスト...",
         "new_status": {
-          "hp": <更新後のHP>,
-          "inventory": ["<更新後の所持品1>", ...]
+          "hp": 90,
+          "inventory": ["剣", "薬草"]
         },
         "game_over": false,
         "choices": ["次の行動のヒント1", "ヒント2", "ヒント3"]
       }
     `;
 
-    // 安定版モデルを使用
+    // ★重要: JSONモードを強制する
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-1.5-flash",
+      model: "gemini-2.0-flash", // または gemini-1.5-flash
       generationConfig: { responseMimeType: "application/json" }
     });
 
-    // 過去の文脈を含める（直近5ターン分くらい）
-    const chatHistory = history.slice(-10).map((h: any) => ({
+    // 過去の文脈を含める
+    const chatHistory = history.slice(-5).map((h: any) => ({
       role: h.role === 'user' ? 'user' : 'model',
       parts: [{ text: h.text }]
     }));
@@ -56,13 +56,27 @@ export async function POST(req: Request) {
     const chat = model.startChat({
       history: [
         ...chatHistory,
-        { role: "user", parts: [{ text: prompt }] } // 今回のプロンプト
+        { role: "user", parts: [{ text: prompt }] }
       ]
     });
 
     const result = await chat.sendMessage("行動判定と描写をお願いします");
     const text = result.response.text();
-    const data = JSON.parse(text);
+    
+    // JSONパース（安全策）
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      // 万が一JSONじゃなかった場合の救済
+      console.error("JSON Parse Error", text);
+      data = {
+        text: text, // そのまま表示
+        new_status: currentStatus,
+        game_over: false,
+        choices: []
+      };
+    }
 
     return NextResponse.json(data);
 
