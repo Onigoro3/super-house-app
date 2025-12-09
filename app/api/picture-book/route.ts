@@ -27,8 +27,7 @@ export async function POST(req: Request) {
       {
         "title": "Title",
         "pages": [
-          { "page_number": 1, "content": "Text...", "image_prompt": "English description..." },
-          { "page_number": 2, "content": "Text...", "image_prompt": "English description..." }
+          { "page_number": 1, "content": "Text...", "image_prompt": "English description..." }
         ]
       }
     `;
@@ -41,8 +40,6 @@ export async function POST(req: Request) {
     
     const result = await model.generateContent(prompt);
     const text = result.response.text();
-    
-    // JSONパース
     const data = JSON.parse(text);
 
     return NextResponse.json(data);
