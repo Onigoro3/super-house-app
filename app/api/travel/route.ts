@@ -10,40 +10,37 @@ export async function POST(req: Request) {
     const { destination, duration, budget, people, theme, transport, origin } = await req.json();
     const startPoint = origin || '大阪府 堺市';
 
+    console.log(`旅行計画生成開始: ${startPoint} -> ${destination}`);
+
+    // 特化モード判定
     const isOnsenMode = theme.includes("温泉") || theme.includes("サウナ");
     const specialInstruction = isOnsenMode ? `
-      【★温泉・サウナ特化モード】
-      1. 行き先周辺で高評価の温泉・温浴施設を**5つ**ピックアップし、「♨️ おすすめ温泉5選」として詳細欄にURL付きでリストアップしてください。
-      2. 夕食は地元の美味しいお店を提案してください。
-      3. 帰路は${startPoint}へのルートを設定してください。
+      【★温泉・サウナ特化】
+      行き先周辺の有名な温泉・温浴施設を5つリストアップし、「♨️ おすすめ温泉5選」として詳細欄に記載してください。
+      （URLはあなたが知っている公式サイトやGoogle検索URLを記載してください）
     ` : "";
 
     const prompt = `
       あなたはプロのトラベルコンシェルジュです。
-      以下の条件で、最高の旅行プランを作成してください。
+      以下の条件で旅行プランを作成し、JSON形式で出力してください。
 
-      【旅行条件】
-      - 出発地: ${startPoint}
+      【条件】
+      - 出発: ${startPoint}
       - 行き先: ${destination}
       - 期間: ${duration}
-      - 人数: ${people}人
-      - 予算: 1人あたり${budget}円
-      - 移動手段: ${transport}
+      - 移動: ${transport}
+      - 予算: ${budget}円
       - テーマ: ${theme}
 
-      【重要ルール】
-      1. **距離:** 各スポットへの「${startPoint}からの移動距離(km)」または前のスポットからの距離を計算して記載。
-      2. **URL:** 各スポットの公式サイトやGoogleマップのURLを必ず含める。
-      3. **時間帯:** 「${duration}」に合わせて開始時刻を調整する。
-      4. 実在するスポットをGoogle検索して提案する。
-
-      ${specialInstruction}
+      【ルール】
+      1. ${startPoint}からの概算距離を計算して記載。
+      2. 各スポットのURLを記載（公式サイトまたはGoogleマップ検索URL）。
+      3. ${specialInstruction}
+      4. 必ず正しいJSON形式で出力すること。Markdown記号（\`\`\`json）は不要。
 
       【出力フォーマット(JSON)】
-      必ず以下のJSON形式のみを出力してください。Markdown記号は不要です。
-
       {
-        "title": "タイトル",
+        "title": "旅行タイトル",
         "concept": "コンセプト",
         "schedule": [
           {
@@ -55,7 +52,7 @@ export async function POST(req: Request) {
                 "desc": "詳細説明", 
                 "cost": "約1,000円", 
                 "distance": "約10km", 
-                "url": "https://..."
+                "url": "https://..." 
               }
             ]
           }
@@ -63,9 +60,10 @@ export async function POST(req: Request) {
       }
     `;
 
-    // ★昨日の安定版に戻しました (gemini-1.5-flash)
+    // ★重要変更: 検索ツールを使わず、AIの知識のみで生成（爆速化）
+    // モデルは最新かつ高速な gemini-2.0-flash を使用
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-1.5-flash",
+      model: "gemini-2.0-flash",
       generationConfig: { responseMimeType: "application/json" },
       safetySettings: [
         { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -74,27 +72,25 @@ export async function POST(req: Request) {
         { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
       ]
     });
-    
-    // タイムアウト対策（20秒）
-    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 20000));
-    
-    const aiPromise = (async () => {
-      const result = await model.generateContent(prompt);
-      return result.response.text();
-    })();
 
-    let text = await Promise.race([aiPromise, timeoutPromise]) as string;
+    // 生成実行
+    const result = await model.generateContent(prompt);
+    let text = result.response.text();
 
-    // クリーニング
+    // クリーニング（念のため）
     text = text.replace(/```json/g, '').replace(/```/g, '').trim();
     
-    return NextResponse.json(JSON.parse(text));
+    // JSONパース確認
+    try {
+      const data = JSON.parse(text);
+      return NextResponse.json(data);
+    } catch (e) {
+      console.error("JSON Parse Error", text);
+      throw new Error("AIの応答がJSON形式ではありませんでした");
+    }
 
   } catch (error: any) {
     console.error("Travel Plan Error:", error);
-    let msg = "プラン作成に失敗しました。";
-    if (error.message === "Timeout") msg = "検索に時間がかかりすぎました。もう一度お試しください。";
-    else if (error.message.includes("404")) msg = "AIモデルのエラーです。しばらくしてからお試しください。";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json({ error: `作成エラー: ${error.message}` }, { status: 500 });
   }
 }
