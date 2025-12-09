@@ -41,43 +41,48 @@ export async function POST(req: Request) {
       }
     `;
 
-    const model = genAI.getGenerativeModel({ 
-      model: "gemini-1.5-flash",
-      generationConfig: { responseMimeType: "application/json" },
-      safetySettings: [
-        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-      ]
-    });
-
-    // ★修正: 履歴の先頭が 'model' ならダミーの 'user' を追加する
-    let chatHistory = history ? history.slice(-10).map((h: any) => ({
+    const chatHistory = history ? history.slice(-5).map((h: any) => ({
       role: h.role === 'user' ? 'user' : 'model',
       parts: [{ text: h.text }]
     })) : [];
 
+    // ★修正: 先頭がmodelならダミーuserを追加
     if (chatHistory.length > 0 && chatHistory[0].role === 'model') {
-      chatHistory.unshift({
-        role: 'user',
-        parts: [{ text: '（ゲーム開始）' }]
-      });
+      chatHistory.unshift({ role: 'user', parts: [{ text: '（ゲーム開始）' }] });
     }
 
-    // タイムアウト対策（10秒）
-    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 10000));
-    
-    const chatPromise = (async () => {
-      const chat = model.startChat({
-        history: chatHistory
-      });
-      const result = await chat.sendMessage(prompt); // プロンプトをメッセージとして送信
-      return result.response.text();
-    })();
+    // ★修正: 確実なモデル名を使用
+    let modelName = "gemini-1.5-flash"; 
 
-    let text = await Promise.race([chatPromise, timeoutPromise]) as string;
-    
+    const generate = async (modelId: string) => {
+      const model = genAI.getGenerativeModel({ 
+        model: modelId,
+        generationConfig: { responseMimeType: "application/json" },
+        safetySettings: [
+          { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        ]
+      });
+
+      const chat = model.startChat({ history: chatHistory });
+      const result = await chat.sendMessage(prompt);
+      return result.response.text();
+    };
+
+    let text = "";
+    try {
+      text = await generate("gemini-1.5-flash");
+    } catch (e) {
+      console.warn("1.5-flash failed, trying gemini-pro", e);
+      // 失敗したら旧モデルで再挑戦（JSONモードなし）
+      const fallbackModel = genAI.getGenerativeModel({ model: "gemini-pro" });
+      const result = await fallbackModel.generateContent(prompt + "\n\nOutput JSON only.");
+      text = result.response.text();
+    }
+
+    // クリーニング
     text = text.replace(/```json/g, '').replace(/```/g, '').trim();
     const data = JSON.parse(text);
 
@@ -87,9 +92,7 @@ export async function POST(req: Request) {
     console.error("Adventure Error:", error);
     
     let errorMsg = "通信エラーが発生しました。";
-    if (error.message === "Timeout") errorMsg = "AIの応答が間に合いませんでした。もう一度試してください。";
-    else if (error.message.includes("404")) errorMsg = "AIモデルが見つかりません。API設定を確認してください。";
-    else if (error.message.includes("SAFETY")) errorMsg = "AIが「不適切な表現」と判断して停止しました。別の行動を試してください。";
+    if (error.message.includes("404")) errorMsg = "AIモデルが見つかりません。APIキーの設定を確認してください。";
     else errorMsg = `エラー: ${error.message}`;
 
     return NextResponse.json({ 
