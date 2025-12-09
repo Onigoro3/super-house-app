@@ -21,14 +21,13 @@ export async function POST(req: Request) {
       "${action}"
 
       【ルール】
-      1. プレイヤーの行動の成否を判定し（必要なら運要素も加味して）、結果を描写してください。
+      1. プレイヤーの行動の成否を判定し、結果を描写してください。
       2. 臨場感あふれる小説のような文体で書いてください。
-      3. プレイヤーがダメージを受ける場面ではHPを減らしてください。
-      4. アイテムを手に入れたり失ったりしたら所持品を更新してください。
-      5. 物語が完結（クリアまたは死亡）した場合は game_over: true にしてください。
+      3. ダメージを受けたらHPを減らし、アイテムを得たら所持品に追加してください。
+      4. 物語が完結（クリア/死亡）したら game_over: true にしてください。
 
       【出力フォーマット(JSON)】
-      必ず以下のJSON形式のみを出力してください。Markdownタグは含めないでください。
+      必ず以下のJSON形式のみを出力してください。Markdownの記号（\`\`\`json 等）は含めないでください。
 
       {
         "text": "ゲームマスターの描写テキスト...",
@@ -37,18 +36,17 @@ export async function POST(req: Request) {
           "inventory": ["剣", "薬草"]
         },
         "game_over": false,
-        "choices": ["次の行動のヒント1", "ヒント2", "ヒント3"]
+        "choices": ["次の行動案1", "次の行動案2"]
       }
     `;
 
-    // ★重要: JSONモードを強制する
+    // 安定版の1.5-flashを使用
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.0-flash", // または gemini-1.5-flash
+      model: "gemini-1.5-flash",
       generationConfig: { responseMimeType: "application/json" }
     });
 
-    // 過去の文脈を含める
-    const chatHistory = history.slice(-5).map((h: any) => ({
+    const chatHistory = history.slice(-10).map((h: any) => ({
       role: h.role === 'user' ? 'user' : 'model',
       parts: [{ text: h.text }]
     }));
@@ -60,28 +58,23 @@ export async function POST(req: Request) {
       ]
     });
 
-    const result = await chat.sendMessage("行動判定と描写をお願いします");
-    const text = result.response.text();
+    const result = await chat.sendMessage("判定をお願いします");
+    let text = result.response.text();
     
-    // JSONパース（安全策）
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch (e) {
-      // 万が一JSONじゃなかった場合の救済
-      console.error("JSON Parse Error", text);
-      data = {
-        text: text, // そのまま表示
-        new_status: currentStatus,
-        game_over: false,
-        choices: []
-      };
-    }
+    // ★修正: JSON以外の余計な文字を徹底的に削除
+    text = text.replace(/```json/g, '').replace(/```/g, '').trim();
 
+    const data = JSON.parse(text);
     return NextResponse.json(data);
 
   } catch (error: any) {
     console.error("Adventure Error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    // エラー時もJSONを返してフロントエンドを止めない
+    return NextResponse.json({ 
+      text: "申し訳ありません。通信が不安定なようです。もう一度同じ行動を試してみてください。",
+      new_status: currentStatus,
+      game_over: false,
+      choices: []
+    });
   }
 }
