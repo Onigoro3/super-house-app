@@ -8,10 +8,8 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 export async function POST(req: Request) {
   try {
     const { destination, duration, budget, people, theme, transport, origin } = await req.json();
-    const startPoint = origin || '大阪府 堺市'; // デフォルト出発地
-    console.log(`旅行計画: ${startPoint} -> ${destination}`);
+    const startPoint = origin || '大阪府 堺市';
 
-    // 特化モード判定
     const isOnsenMode = theme.includes("温泉") || theme.includes("サウナ");
     const specialInstruction = isOnsenMode ? `
       【★温泉・サウナ特化モード】
@@ -65,12 +63,11 @@ export async function POST(req: Request) {
       }
     `;
 
-    // ★修正: 最新モデル 'gemini-2.5-flash' を使用
+    // ★修正: 最新モデル gemini-2.5-flash & 安全フィルター解除
     const model = genAI.getGenerativeModel({ 
       model: "gemini-2.5-flash",
-      tools: [{ googleSearch: {} } as any], // 検索ツール有効化
+      tools: [{ googleSearch: {} } as any],
       generationConfig: { responseMimeType: "application/json" },
-      // 安全フィルター解除（誤検知防止）
       safetySettings: [
         { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
         { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -79,31 +76,25 @@ export async function POST(req: Request) {
       ]
     });
     
-    // タイムアウト対策（15秒）
-    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 15000));
+    // タイムアウト対策（20秒に延長）
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 20000));
     
     const aiPromise = (async () => {
       const result = await model.generateContent(prompt);
       return result.response.text();
     })();
 
-    // 競走
     let text = await Promise.race([aiPromise, timeoutPromise]) as string;
 
-    // クリーニング（```json ... ``` を削除）
+    // クリーニング
     text = text.replace(/```json/g, '').replace(/```/g, '').trim();
     
-    const data = JSON.parse(text);
-
-    return NextResponse.json(data);
+    return NextResponse.json(JSON.parse(text));
 
   } catch (error: any) {
     console.error("Travel Plan Error:", error);
-    
     let msg = "プラン作成に失敗しました。";
     if (error.message === "Timeout") msg = "検索に時間がかかりすぎました。もう一度お試しください。";
-    else if (error.message.includes("404")) msg = "AIモデルのエラーです。管理者に連絡してください。";
-    
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
